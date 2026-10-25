@@ -13,9 +13,9 @@ ext_dir = os.path.join(root, 'extension')
 pkg = json.load(open(os.path.join(ext_dir, 'package.json'), encoding='utf-8'))
 out = os.path.join(root, f"{pkg['name']}.vsix")
 
-# Repo-root files the Marketplace page needs, copied into the package the way vsce does.
-extra = {'extension/README.md': 'README.md', 'extension/LICENSE.txt': 'LICENSE',
-         'extension/THIRD_PARTY_NOTICES.md': 'THIRD_PARTY_NOTICES.md'}
+# Repo-root files the Marketplace page needs, copied into the package the way vsce does. (The page itself is
+# extension/README.md; the repo's README.md is the front page for both the VS Code and the Thonny version.)
+extra = {'extension/LICENSE.txt': 'LICENSE', 'extension/THIRD_PARTY_NOTICES.md': 'THIRD_PARTY_NOTICES.md'}
 
 repo = pkg['repository']['url']
 banner = pkg.get('galleryBanner', {})

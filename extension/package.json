@@ -26,9 +26,9 @@
     "test cases",
     "python"
   ],
-  "homepage": "https://github.com/PoTOsuA7/ICE-grader-vscode#readme",
+  "homepage": "https://github.com/PoTOsuA7/ICE-grader/tree/main/extension#readme",
   "bugs": {
-    "url": "https://github.com/PoTOsuA7/ICE-grader-vscode/issues"
+    "url": "https://github.com/PoTOsuA7/ICE-grader/issues"
   },
   "engines": {
     "vscode": "^1.90.0"
@@ -298,7 +298,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/PoTOsuA7/ICE-grader-vscode"
+    "url": "https://github.com/PoTOsuA7/ICE-grader"
   },
   "author": "PoTOsuA7",
   "scripts": {

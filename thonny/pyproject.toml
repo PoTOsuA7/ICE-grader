@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "thonny-ice-grader"
-version = "0.2.0"
+version = "0.2.1"
 description = "NatteeGrader (Chula 2190101) in Thonny: your problems, statements, the grader's tests and submit"
 readme = "README.md"
 license = { text = "MIT" }
@@ -28,8 +28,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/PoTOsuA7/ICE-grader-vscode"
-Source = "https://github.com/PoTOsuA7/ICE-grader-vscode/tree/main/thonny"
+Homepage = "https://github.com/PoTOsuA7/ICE-grader"
+Source = "https://github.com/PoTOsuA7/ICE-grader/tree/main/thonny"
 
 [tool.setuptools.packages.find]
 include = ["thonnycontrib.*"]
