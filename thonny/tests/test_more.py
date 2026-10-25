@@ -7,7 +7,7 @@ import unittest
 
 from thonnycontrib.ice_grader.ai import CODE_REMOVED, AIError, build_prompt, call_gemini, without_code
 from thonnycontrib.ice_grader.clipboard import copy_command, copy_file
-from thonnycontrib.ice_grader.statement import can_show_pdfs, render_pdf
+from thonnycontrib.ice_grader.statement import GAP, can_show_pdfs, lay_out, position_of, render_pdf, spot_at, wheel_steps
 
 FAILURE = {"n": 2, "verdict": "FAIL", "input": "3\n", "expected": "6\n", "actual": "5\n", "stderr": ""}
 
@@ -117,6 +117,39 @@ class Statement(unittest.TestCase):
         self.assertTrue(data.startswith(b"P6\n300 400\n255\n"))
         self.assertEqual(len(data), len(b"P6\n300 400\n255\n") + 300 * 400 * 3)
         self.assertEqual([(w, h) for w, h, _ in render_pdf(self.path, 300, zoom=2)], [(600, 800), (600, 800)])
+
+    def test_pages_of_different_sizes_keep_their_proportions_and_a_newer_zoom_stops_a_render(self):
+        import pypdfium2 as pdfium
+        pdf = pdfium.PdfDocument(self.path)
+        pdf.new_page(300, 400)
+        pdf.save(self.path + "2")
+        pdf.close()
+        self.assertEqual([(w, h) for w, h, _ in render_pdf(self.path + "2", 300)], [(300, 400), (300, 400), (150, 200)])
+        self.assertIsNone(render_pdf(self.path, 300, stale=lambda: True))
+
+
+class Zoom(unittest.TestCase):
+    """The Statement panel's layout and zoom, without a screen: what is under the mouse stays under it."""
+
+    def test_pages_are_centred_and_a_page_wider_than_the_panel_scrolls_sideways(self):
+        boxes, width, height = lay_out([(300, 400), (150, 200)], 400)
+        self.assertEqual((boxes, width, height), ([(50, GAP, 300, 400), (125, 420, 150, 200)], 400, 630))
+        boxes, width, _ = lay_out([(900, 1200)], 400)
+        self.assertEqual((boxes[0][0], width), (GAP, 900 + 2 * GAP))
+
+    def test_the_spot_under_the_mouse_is_found_again_after_zooming(self):
+        before, _, _ = lay_out([(300, 400), (300, 400)], 320)
+        spot = spot_at(before, 160, 600)  # second page, a little below its top, in the middle
+        self.assertEqual(spot[0], 1)
+        after, _, _ = lay_out([(600, 800), (600, 800)], 320)
+        self.assertEqual([round(v, 6) for v in position_of(after, spot)], [GAP + 300, 820 + 2 * (600 - 420)])
+        self.assertEqual(spot_at(before, 160, 5000)[0], 1)  # below everything: the last page
+
+    def test_wheel_notches(self):
+        self.assertEqual(wheel_steps(120, "win32", 8.6), 1)
+        self.assertEqual(wheel_steps(-30, "win32", 8.6), -0.25)  # a touchpad
+        self.assertEqual(wheel_steps(-2, "aqua", 8.6), -2)
+        self.assertEqual(wheel_steps(240, "aqua", 9.0), 2)
 
 
 if __name__ == "__main__":

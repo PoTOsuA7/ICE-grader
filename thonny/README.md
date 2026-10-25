@@ -7,7 +7,7 @@ the grader's tests and submit, without leaving Thonny.
 - **Grader panel** with your problems by chapter and your progress: solved, in progress (with your best score) and
   `solved/total` per chapter. Exam practice problems are grouped as Exam1, Exam2, ...
 - **Double-click a problem** to open its solution file (made for you as `05_List/05_List_15.py`) and its statement.
-- **Statement panel** beside your code, with zoom. **Copy** puts the PDF itself on the clipboard, to paste into a
+- **Statement panel** beside your code. Ctrl + mouse wheel zooms where you point; drag to move around. **Copy** puts the PDF itself on the clipboard, to paste into a
   chat or an AI; **Save** and **Open** (in your PDF app) are there too. Switching files shows each one's statement.
 - **Run tests**, or just save: PASS / FAIL / TLE / RE for each test. A wrong answer shows the input, the expected
   output, yours, and the first line that differs. On save the Shell stays in front and the Grader panel shows the score.
