@@ -39,16 +39,26 @@ function startViewer({ msPerArea, numPages = 3, pageHeight = 800 }) {
   page.getTextContent = async () => ({ items: [{ str: 'Line one', hasEOL: true }, { str: 'Line ', hasEOL: false }, { str: 'two', hasEOL: false }] });
   const pdfDoc = { numPages, getPage: async () => page };
   const posted = [];
+  const opened = []; // what pdf.js was asked to open, with which options
   const window = {
-    'pdfjs-dist/build/pdf': { GlobalWorkerOptions: {}, getDocument: () => ({ promise: Promise.resolve(pdfDoc) }) },
+    'pdfjs-dist/build/pdf': { GlobalWorkerOptions: {}, getDocument: (o) => { opened.push(o); return { promise: Promise.resolve(pdfDoc) }; } },
     innerWidth: 800, innerHeight: 600, addEventListener: (t, f) => { listeners[`window:${t}`] = f; },
   };
   const fetch = async () => ({ blob: async () => ({}), arrayBuffer: async () => new ArrayBuffer(1) });
   new Function('window', 'document', 'fetch', 'URL', 'setTimeout', 'clearTimeout', 'acquireVsCodeApi', src)(
     window, document, fetch, { createObjectURL: () => 'blob:x' }, setTimeout, clearTimeout, () => ({ postMessage: (m) => posted.push(m) }));
-  return { els, listeners, posted };
+  return { els, listeners, posted, opened };
 }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+test('pdf.js never compiles a statement\'s fonts into code (CVE-2024-4367), and the page allows no eval', async () => {
+  const v = startViewer({ msPerArea: 0, numPages: 1 });
+  await wait(50);
+  assert.strictEqual(v.opened.length, 1);
+  assert.strictEqual(v.opened[0].isEvalSupported, false);
+  const html = statementHtml({ asWebviewUri: (u) => 'vs://' + u.p, cspSource: 'vs:' }, 'x.pdf', 'lib');
+  assert.doesNotMatch(/Content-Security-Policy" content="([^"]*)"/.exec(html)[1], /unsafe-eval/);
+});
 
 test('quick zooming ends on the last zoom level, even when an older render finishes last', async () => {
   const v = startViewer({ msPerArea: 1 / 4000 });

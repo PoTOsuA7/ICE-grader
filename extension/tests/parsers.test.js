@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const { parseProblemList, parseSubmissionPage, parseSubmissionSource, parseSubmitForm, GraderClient } = require('../lib/client');
+const { parseProblemList, parseSubmissionPage, parseSubmissionSource, parseSubmitForm, GraderClient, decodeEntities } = require('../lib/client');
 
 test('the code of a submission is read from its page exactly as submitted, with its language', () => {
   const html = `<h2>Submission: #9</h2>
@@ -63,6 +63,13 @@ test('parseSubmissionPage reads points, status and per-test verdicts', () => {
   assert.strictEqual(g.done, true);
   assert.strictEqual(g.runtime, '0.014 s');
   assert.deepStrictEqual(g.tests.map((t) => [t.n, t.label]), [[1, 'Correct'], [2, 'Wrong answer']]);
+});
+
+test('a character number that is no character becomes U+FFFD, like in a browser, instead of breaking the page', () => {
+  assert.strictEqual(decodeEntities('&#x110000;&#xD800;&#0;&#99999999999;&#65;&#x42;'), '����AB');
+  const list = parseProblemList(`<table>${row(10, '05_List_11', 'solved', '100.0', '555').replace('Name &amp; Co', 'Name &#x110000;')}</table>`);
+  assert.strictEqual(list.length, 1);
+  assert.match(list[0].name, /Name �/);
 });
 
 test('parseSubmissionPage reports a submission that is still grading', () => {

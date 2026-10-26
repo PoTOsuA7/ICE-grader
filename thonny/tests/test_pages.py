@@ -1,11 +1,11 @@
 """Reading the grader's pages and comparing outputs (same cases as the VS Code extension's tests)."""
 import unittest
 
-from thonnycontrib.ice_grader.client import (parse_data_files, parse_problem_list, parse_submission_page,
-                                             parse_submission_source, parse_submit_form, parse_testcase_page)
+from thonnycontrib.ice_grader.client import (decode_entities, parse_data_files, parse_problem_list, parse_submission_page,
+                                             parse_submission_source, parse_submit_form, parse_testcase_page, tile_passed)
 from thonnycontrib.ice_grader import last_submit_text, summary_text
 from thonnycontrib.ice_grader.diff import checked_part, code_hash, compared_outputs, first_difference, normalize, visible
-from thonnycontrib.ice_grader.layout import chapter_of, safe_name, solution_path
+from thonnycontrib.ice_grader.layout import chapter_of, is_exam, safe_name, solution_path
 from thonnycontrib.ice_grader.runner import last_submit_on
 
 
@@ -112,6 +112,26 @@ class Pages(unittest.TestCase):
         [c] = parse_testcase_page(page(pane(1, ("50 KB", "x" * 2048), ("3 Bytes", "ok\n"))))
         self.assertEqual((c["input_cut"], c["output_cut"]), (True, False))
 
+    def test_a_character_number_that_is_no_character_becomes_u_fffd_like_in_a_browser(self):
+        self.assertEqual(decode_entities("&#x110000;&#xD800;&#0;&#99999999999;&#65;&#x42;&#๑;"),
+                         "����AB&#๑;")
+        [c] = parse_testcase_page(page(pane(1, ("3 Bytes", "&#xD800;"), ("2 Bytes", "ok"))))  # no UnicodeEncodeError
+        self.assertEqual(c["input"], "�")
+        self.assertEqual(len(parse_problem_list("<table>%s</table>" % row(10, "x", "solved", "1", None).replace("Name", "&#x110000;"))), 1)
+
+    def test_only_ascii_digits_and_a_malformed_number_does_not_stop_the_page_being_read(self):
+        # the same as the VS Code version: Thai digits are no id, and "5.5.5" reads as 5.5 (JavaScript's parseFloat)
+        self.assertEqual(parse_problem_list("<table>%s</table>" % row("๑๒", "x", "solved", "1", None)), [])
+        [p] = parse_problem_list("<table>%s</table>" % row(10, "x", "inprogress", "5.5.5", "๑"))
+        self.assertEqual((p["score"], p["last_submission_id"]), (5.5, None))
+        g = parse_submission_page(field("Points", "1.2.3/10") + '<span title="Test ๑ of 2: x">P</span>')
+        self.assertEqual((g["points"], g["max"], g["tests"]), (1.2, 10, []))
+
+    def test_a_tile_is_a_pass_only_for_a_passed_test(self):
+        tiles = [("Correct", "P"), ("Incorrect", "-"), ("Wrong answer", ""), ("Correct", ""), ("Time limit", "T")]
+        self.assertEqual([tile_passed({"label": label, "letter": letter}) for label, letter in tiles],
+                         [True, False, False, True, False])
+
     def test_data_files_are_read_but_not_taken_as_a_test(self):
         data = "<div id='data-files'>%s</div>" % tc_file("data.txt", "6 Bytes", "1\n2\n3\n")
         html = page(pane(1, ("15 Bytes", "/data/data.txt\n"), ("2 Bytes", "6\n")), data=data)
@@ -206,6 +226,20 @@ class Layout(unittest.TestCase):
         self.assertEqual(safe_name(".."), "problem")
         self.assertEqual(safe_name("a/b c"), "a_b_c")
         self.assertTrue(solution_path("root", "05_List_15").replace("\\", "/").endswith("root/05_List/05_List_15.py"))
+
+    def test_no_name_ends_in_a_dot_or_is_a_windows_device_name(self):
+        # the same names as the VS Code version's safeName
+        self.assertEqual(safe_name("trailing."), "trailing")
+        self.assertEqual(safe_name("a_."), "a")
+        self.assertEqual([safe_name(c) for c in ("NUL", "con.py", "COM1", "lpt9", "aux")], ["_NUL", "_con.py", "_COM1", "_lpt9", "_aux"])
+        self.assertEqual([safe_name(c) for c in ("Console_01", "NULL", "com10", "05_NUL_01")], ["Console_01", "NULL", "com10", "05_NUL_01"])
+        self.assertTrue(solution_path("root", "CON").replace("\\", "/").endswith("root/_CON/_CON.py"))
+
+    def test_exams_by_ascii_letters_and_digits_only(self):
+        # like the VS Code version: a Thai digit is no exam number, the Kelvin sign is no "k"
+        self.assertEqual(chapter_of("Exam_๒"), "Exam")
+        self.assertTrue(is_exam("Kexam"))
+        self.assertEqual(chapter_of("Kexam_1"), "Exam1")
 
 
 if __name__ == "__main__":

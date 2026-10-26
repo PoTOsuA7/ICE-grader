@@ -15,6 +15,9 @@ class Emitter {
 }
 
 const crlf = (s) => s.replace(/\r?\n/g, '\r\n');
+// Control characters other than newlines and tabs (e.g. in a data file name from the grader) could move the
+// cursor, retitle the terminal or add links to it.
+const printable = (s) => s.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '');
 
 // -> a vscode.Pseudoterminal. onExit runs once, when the program has ended (or could not start).
 function programTerminal({ cmd, args = [], cwd, env = {}, intro = '', onExit = () => {}, kill = (child) => child.kill() }) {
@@ -29,7 +32,7 @@ function programTerminal({ cmd, args = [], cwd, env = {}, intro = '', onExit = (
   const finish = () => { if (!exited) { exited = true; running = false; onExit(); } };
 
   function start() {
-    if (intro) out(`${DIM}${crlf(intro)}${RESET}\r\n`);
+    if (intro) out(`${DIM}${crlf(printable(intro))}${RESET}\r\n`);
     try {
       child = spawn(cmd, args, { cwd, env: { ...process.env, ...env }, windowsHide: true, detached: process.platform !== 'win32' });
     } catch (e) {

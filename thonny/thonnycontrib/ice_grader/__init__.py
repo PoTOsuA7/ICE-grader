@@ -16,7 +16,7 @@ from tkinter import filedialog, messagebox, ttk
 from tkinter import font as tkfont
 
 from .ai import DEFAULT_MODEL, FALLBACK_MODEL, AIError, build_prompt, call_gemini
-from .client import GraderError, SessionExpired
+from .client import GraderError, SessionExpired, tile_passed
 from .clipboard import copy_file
 from .core import DEFAULT_ROOT, Core, NotSignedIn
 from .diff import checked_part, compared_outputs, first_difference, visible
@@ -932,8 +932,7 @@ class GraderResultsView(ttk.Frame):
         if r.get("timed_out"):
             self.write("Still grading - check the grader site for the result.\n", "dim")
         for t in r["tests"]:
-            good = t["letter"].strip().upper() in ("P", "")
-            self.write("Test %d: %s\n" % (t["n"], t["label"]), "PASS" if good else "FAIL")
+            self.write("Test %d: %s\n" % (t["n"], t["label"]), "PASS" if tile_passed(t) else "FAIL")
 
 
 def summary_text(results):

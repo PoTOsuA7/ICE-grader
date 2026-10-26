@@ -19,9 +19,11 @@ function firstDifference(expected, actual) {
     if (e[i] === a[i]) continue;
     if (e[i] === undefined) return { line: i + 1, kind: 'extra', actual: a[i] };
     if (a[i] === undefined) return { line: i + 1, kind: 'missing', expected: e[i] };
+    // index counts characters, not UTF-16 units: an emoji is one column
+    const ec = Array.from(e[i]);
+    const ac = Array.from(a[i]);
     let index = 0;
-    while (index < e[i].length && index < a[i].length && e[i][index] === a[i][index]) index++;
-    if (/[\uD800-\uDBFF]/.test(e[i][index - 1])) index--; // the start of an emoji (two UTF-16 units), not its middle
+    while (index < ec.length && index < ac.length && ec[index] === ac[index]) index++;
     const collapse = (s) => s.replace(/\s+/g, ' ').trim();
     return {
       line: i + 1, kind: 'differs', expected: e[i], actual: a[i], index,
@@ -36,10 +38,11 @@ const visible = (s) => s.replace(/ /g, '·').replace(/\t/g, '→').replace(/\r/g
 
 // The part of a cut-off expected output that can be checked: its complete lines, and the start of the last line,
 // which may be cut mid-way. The 2 KB cut can split a multi-byte character (Thai, ...), leaving one or more "�":
-// those are dropped, then one more character, in case the cut left anything else half-written.
+// those are dropped, then one more character, in case the cut left anything else half-written. (Characters, not
+// UTF-16 units, so an emoji is never cut in half.)
 function shownPart(output) {
   const shown = normLines(output);
-  const cut = (shown[shown.length - 1] || '').replace(/�+$/, '').slice(0, -1);
+  const cut = Array.from((shown[shown.length - 1] || '').replace(/�+$/, '')).slice(0, -1).join('');
   return { complete: shown.slice(0, -1), cut };
 }
 
@@ -57,11 +60,12 @@ function checkedPart(output) {
 function comparedOutputs(tc, actual) {
   if (!tc.partialOutput) return { expected: tc.output, actual };
   const { complete, cut } = shownPart(tc.output);
+  const cutChars = Array.from(cut);
   if (!complete.length && !cut) return { expected: '', actual: '', unchecked: true };
   const mine = normLines(actual);
   const expected = cut ? [...complete, cut] : complete;
   const got = mine.slice(0, complete.length);
-  if (cut && mine.length > complete.length) got.push(mine[complete.length].slice(0, cut.length));
+  if (cut && mine.length > complete.length) got.push(Array.from(mine[complete.length]).slice(0, cutChars.length).join(''));
   return { expected: expected.join('\n'), actual: got.join('\n') };
 }
 

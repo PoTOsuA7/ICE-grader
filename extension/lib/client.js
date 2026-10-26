@@ -4,10 +4,13 @@
 
 const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", ZeroWidthSpace: '', nbsp: ' ' };
 
+// Like a browser: a number that is no character (0, a surrogate, past U+10FFFF) becomes U+FFFD instead of failing.
+const fromCode = (n) => (n > 0 && n <= 0x10ffff && !(n >= 0xd800 && n <= 0xdfff) ? String.fromCodePoint(n) : '�');
+
 function decodeEntities(s) {
   return s
-    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
-    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => fromCode(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => fromCode(parseInt(d, 10)))
     .replace(/&([a-zA-Z]+);/g, (m, n) => (n in ENTITIES ? ENTITIES[n] : m));
 }
 
@@ -135,6 +138,10 @@ function parseDataFiles(html) {
 
 const LANGUAGE_PATTERNS ={ '.py': /python/i, '.cpp': /c\+\+|cpp/i, '.c': /^c$|^c\s|\bansi c\b/i };
 
+// The only file types a statement is saved as. Any other name from the grader (statement.bat, x.exe, ...) is not
+// trusted: the file would run when opened.
+const STATEMENT_EXTS = ['.pdf', '.html', '.htm', '.txt', '.md', '.png', '.jpg', '.jpeg', '.gif'];
+
 class GraderClient {
   constructor(rootUrl) {
     this.root = rootUrl.replace(/\/+$/, '') + '/';
@@ -231,9 +238,10 @@ class GraderClient {
       return { data: Buffer.from(body), ext: '.html' };
     }
     const fn = /filename="?([^";]+)"?/.exec(disp);
-    const ext = (fn && /\.[A-Za-z0-9]+$/.exec(fn[1])?.[0]) ||
+    const named = fn && /\.[A-Za-z0-9]+$/.exec(fn[1])?.[0].toLowerCase();
+    const ext = (STATEMENT_EXTS.includes(named) && named) ||
       { 'application/pdf': '.pdf', 'text/html': '.html', 'text/plain': '.txt' }[type] || '.bin';
-    return { data: Buffer.from(await res.arrayBuffer()), ext: ext.toLowerCase() };
+    return { data: Buffer.from(await res.arrayBuffer()), ext };
   }
 
   // -> [{input, output, partialInput?, partialOutput?, files?}]. Read from the test case page only: the instructors

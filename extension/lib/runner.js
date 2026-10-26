@@ -90,6 +90,13 @@ function killTree(child) {
   }
 }
 
+// The name a data file gets: never a path. On Windows also without the dots and spaces at the end, which Windows
+// drops when the program opens it (Node would keep them, so the program could not find the file).
+const dataName = (name, platform = process.platform) => {
+  const base = path.basename(name);
+  return platform === 'win32' ? base.replace(/[. ]+$/, '') : base;
+};
+
 // Data files: on the grader a problem's data files sit in /data/ and the test input names them by that
 // absolute path (e.g. "/data/data.txt 2562"). Locally they're written to a temp folder, the program runs
 // there, and "/data/<name>" in the input becomes the relative "data/<name>" (no drive letters or spaces).
@@ -100,7 +107,7 @@ function dataSandbox(files) {
   try {
     fs.mkdirSync(path.join(dir, 'data'));
     for (const [name, text] of Object.entries(files)) {
-      const safe = path.basename(name); // never write outside the sandbox
+      const safe = dataName(name); // never write outside the sandbox
       if (!safe || safe === '.' || safe === '..') continue;
       fs.writeFileSync(path.join(dir, 'data', safe), text);
       if (safe !== 'data') fs.writeFileSync(path.join(dir, safe), text); // "data" is the folder itself
@@ -115,7 +122,7 @@ function dataSandbox(files) {
 function mapDataPaths(input, files) {
   if (!files) return input;
   let out = input;
-  for (const name of Object.keys(files)) out = out.split(`/data/${name}`).join(`data/${path.basename(name)}`);
+  for (const name of Object.keys(files)) out = out.split(`/data/${name}`).join(`data/${dataName(name)}`);
   return out;
 }
 
@@ -229,4 +236,4 @@ async function runSingle(file, input, cfg, files) {
   }
 }
 
-module.exports = { runTests, runSingle, terminalCommand, dataSandbox, killTree, normalize, mapDataPaths, lastSubmitOn, findPython, prepare }; // findPython and prepare: for tests
+module.exports = { runTests, runSingle, terminalCommand, dataSandbox, killTree, normalize, mapDataPaths, lastSubmitOn, findPython, prepare, dataName }; // findPython, prepare and dataName: for tests

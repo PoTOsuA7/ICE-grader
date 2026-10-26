@@ -2,11 +2,16 @@
 // Where solution files go in the workspace.
 const path = require('path');
 
-// A file or folder name made from a problem code. Never "." or ".." (or empty), which would point outside.
-// No trailing dot (Windows drops it, so other programs can't find the folder) and at most 100 characters.
+// Windows device names, which are no files or folders there (CON, NUL.py, ...)
+const DEVICE = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/i;
+
+// A file or folder name made from a problem code. Never "." or ".." (or empty), which would point outside, never a
+// Windows device name, no dot at the end (Windows drops it, so Python could not open the file VS Code made) and at
+// most 100 characters. Same rule as the Thonny plug-in's safe_name().
 const safeName = (s) => {
   const name = s.replace(/[^\w\-.]+/g, '_').replace(/_+/g, '_').slice(0, 100).replace(/^_|[_.]+$/g, '');
-  return !name || /^\.+$/.test(name) ? 'problem' : name;
+  if (!name) return 'problem';
+  return DEVICE.test(name) ? `_${name}` : name;
 };
 
 // Exam practice problems, e.g. 2025s1_Exam2_A1-1_Student or Exam1-2024_Q1A_student (not "Example").

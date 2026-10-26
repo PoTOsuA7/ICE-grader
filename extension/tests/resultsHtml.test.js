@@ -19,6 +19,21 @@ test('a spacing mistake shows the marked character and the spacing hint', () => 
   assert.ok(html.includes('Hello·<mark>P</mark>ython.')); // your line: "P" sits where the second space should be
 });
 
+test('after an emoji the marked column is still the right character', () => {
+  const html = diffHtml('\u{1F600}ab', '\u{1F600}xb');
+  assert.ok(html.includes('line 1, column 2'));
+  assert.ok(html.includes('\u{1F600}<mark>a</mark>b') && html.includes('\u{1F600}<mark>x</mark>b'));
+});
+
+test('a grader tile is green only for a passed test: "Incorrect" is not correct, a missing letter is not a pass', () => {
+  const tiles = (tests) => submissionHtml({ code: 'X' }, 5, { tests, status: 'done', done: true, points: 0, max: 100 })
+    .match(/tile (ok|bad)/g).map((t) => t.slice(5));
+  assert.deepStrictEqual(tiles([
+    { n: 1, total: 4, label: 'Correct', letter: 'P' }, { n: 2, total: 4, label: 'Incorrect', letter: '-' },
+    { n: 3, total: 4, label: 'Wrong answer', letter: '' }, { n: 4, total: 4, label: 'Correct', letter: '' },
+  ]), ['ok', 'bad', 'bad', 'ok']);
+});
+
 test('single run reports PASS when output matches, FAIL otherwise', () => {
   assert.ok(singleResultHtml('t', 'in', 'ok', { verdict: 'OK', ms: 1, stdout: 'ok\n', stderr: '' }).includes('v PASS'));
   assert.ok(singleResultHtml('t', 'in', 'ok', { verdict: 'OK', ms: 1, stdout: 'no', stderr: '' }).includes('v FAIL'));

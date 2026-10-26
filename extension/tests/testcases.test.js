@@ -316,3 +316,13 @@ test('a skipped test shows the last submission\'s verdict on it, short, and is n
   const evil = localResultsHtml({ code: 'X' }, cases, skip({ id: '7', label: '<b>x</b>', same: true }));
   assert.ok(!evil.includes('<b>x</b>') && evil.includes('&lt;b&gt;x&lt;/b&gt;'), 'the grader\'s text is escaped');
 });
+
+test('a data file whose name ends in a dot is found by the program on every system (same names as the Thonny plug-in)', async (t) => {
+  const { dataName } = require('../lib/runner');
+  assert.deepStrictEqual(['trail.', 'a b. ', '...', 'x.txt'].map((n) => dataName(n, 'win32')), ['trail', 'a b', '', 'x.txt']);
+  assert.strictEqual(dataName('trail.', 'linux'), 'trail.');
+  const f = await pyFile(t, 'print(open(input().split()[0]).read().strip())');
+  if (!f) return;
+  const res = await runTests(f, [{ input: '/data/trail. 1\n', output: '7\n', files: { 'trail.': '7\n', '...': 'x' } }], PY_CFG);
+  assert.deepStrictEqual(res.map((r) => r.verdict), ['PASS'], res[0].stderr);
+});

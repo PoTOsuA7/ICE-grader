@@ -2,6 +2,7 @@
 import email.parser
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -11,13 +12,17 @@ import unittest
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from thonnycontrib.ice_grader import client as client_module
 from thonnycontrib.ice_grader.client import GraderClient, GraderError, SessionExpired
-from thonnycontrib.ice_grader.core import Core, NotSignedIn
+from thonnycontrib.ice_grader.core import Core, NotSignedIn, language_ext
 from thonnycontrib.ice_grader.passwords import MemorySecrets
 from test_pages import FORM, field, page, pane, row, tile
 
 LOGIN_PAGE = '<form action="/login/login"><input name="authenticity_token" value="t&amp;1"><input name="password"></form>'
 LIST = "<table>%s%s</table>" % (row(10, "05_List_15", "inprogress", "40.0", "500"), row(11, "06_Func_21", "untried", "0", None))
+STATEMENT_NAMES = {"21": ("application/octet-stream", "statement.bat"), "22": ("application/pdf", "x.EXE"),
+                   "23": ("application/pdf", "a.pdf.lnk"), "24": ("text/plain", "x.hta"),
+                   "25": ("application/pdf", "05_List_15.PDF"), "26": ("application/pdf", "notes.Html")}
 
 
 class FakeGrader(BaseHTTPRequestHandler):
@@ -56,6 +61,10 @@ class FakeGrader(BaseHTTPRequestHandler):
         if self.path == "/problems/10/download/statement":
             return self._send(200, b"%PDF-1.4 fake", [("Content-Type", "application/pdf"),
                                                       ("Content-Disposition", 'attachment; filename="05_List_15.PDF"')])
+        named = re.fullmatch(r"/problems/(2[0-9])/download/statement", self.path)
+        if named:  # statements the grader gives odd file names
+            ctype, name = STATEMENT_NAMES[named.group(1)]
+            return self._send(200, b"echo hi", [("Content-Type", ctype), ("Content-Disposition", 'attachment; filename="%s"' % name)])
         if self.path == "/testcases/show_problem/10":
             return self._html(page(pane(1, ("4 Bytes", "2 3\n"), ("2 Bytes", "5\n"))))
         if self.path == "/submissions/direct_edit_problem/10":
@@ -141,6 +150,29 @@ class Client(unittest.TestCase):
         steal = [e for e in FakeGrader.log if e[1] == "/steal"]
         self.assertEqual(len(steal), 1)
         self.assertIsNone(steal[0][2])
+
+    def test_a_statement_is_never_saved_as_a_type_that_runs_when_opened(self):
+        # Open (os.startfile) would run a statement.bat: only document and picture types are kept
+        c = self.signed_in()
+        self.assertEqual([c.fetch_statement(pid)[1] for pid in sorted(STATEMENT_NAMES)], [".bin", ".pdf", ".pdf", ".txt", ".pdf", ".html"])
+
+    def test_the_session_and_the_password_never_travel_over_plain_http(self):
+        sent = []
+
+        class Opener:
+            def open(self, req, timeout=None):
+                sent.append(req)
+                raise OSError("not sent")
+
+        real = client_module._opener
+        client_module._opener = Opener()
+        try:
+            for call in (lambda c: c.list_problems(), lambda c: c.login("u", "pw")):
+                with self.assertRaisesRegex(GraderError, "must start with https://"):
+                    call(GraderClient("http://grader.example/", {"_session": "abc"}))
+        finally:
+            client_module._opener = real
+        self.assertEqual(sent, [])
 
     def test_submit_sends_the_form_the_grader_expects_and_waits_for_the_grade(self):
         c = self.signed_in()
@@ -405,6 +437,10 @@ class Saved(unittest.TestCase):
         _, results = c.run_tests(sys.executable, file, p, 10)
         self.assertEqual(results[1]["last_submit"], {"id": "500", "label": "Correct", "same": True})
         self.assertNotIn("submission", FakeClient.calls)
+
+    def test_exported_code_is_named_for_its_language_like_in_vs_code(self):
+        self.assertEqual([language_ext(x) for x in ("Python", "C++", "cpp", "C", " c ", "GNU ANSI C", "Java")],
+                         [".py", ".cpp", ".cpp", ".c", ".c", ".txt", ".txt"])
 
 
 if __name__ == "__main__":

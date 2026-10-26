@@ -25,6 +25,15 @@ class NotSignedIn(GraderError):
     pass
 
 
+def language_ext(language):
+    """The file extension for a submission's language, as the VS Code version names them."""
+    if re.search("python", language, re.I):
+        return ".py"
+    if re.search(r"c\+\+|cpp", language, re.I):
+        return ".cpp"
+    return ".c" if re.fullmatch(r"\s*c\s*", language, re.I) else ".txt"
+
+
 class Core:
     def __init__(self, data_dir, root_url=DEFAULT_ROOT, client_class=GraderClient, secrets=None):
         self.root = root_url
@@ -290,7 +299,7 @@ class Core:
                 dst.write(src.read())
             if p.get("last_submission_id"):
                 code = self._call(lambda c: c.fetch_submission_source(p["last_submission_id"]))
-                ext = ".py" if re.search("python", code["language"], re.I) else ".txt"
+                ext = language_ext(code["language"])
                 with open(os.path.join(into, safe_name(p["code"]) + ext), "w", encoding="utf-8", newline="") as f:
                     f.write(code["source"])
                 solutions[0] += 1

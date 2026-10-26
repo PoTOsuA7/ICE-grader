@@ -30,6 +30,10 @@ function withoutCode(text) {
 
 const clip = (s) => (s.length > MAX_FIELD ? s.slice(0, MAX_FIELD) + '\n... (truncated)' : s);
 
+// Python's error messages name each file by its full path, which has the computer's user name in it: send only the
+// file's own name.
+const hidePaths = (s) => s.replace(/File "[^"\n]*[\\/]([^"\\/\n]*)"/g, 'File "$1"');
+
 // failure: { n, testInput, expected?, partialOutput?, actual, stderr?, verdict }
 function describeFailure({ n, testInput, expected, partialOutput, actual, stderr, verdict }) {
   const lines = [`### Test ${n} - ${verdict}`, 'Input:', '```', clip(testInput || '(empty)'), '```'];
@@ -43,7 +47,7 @@ function describeFailure({ n, testInput, expected, partialOutput, actual, stderr
     if (d) lines.push(`(First difference from expected: ${d.kind === 'differs' ? `line ${d.line}, column ${d.index + 1}` : `line ${d.line} (${d.kind} line)`})`);
   }
   lines.push('Actual output:', '```', clip(actual || '(no output)'), '```');
-  if (stderr) lines.push('stderr:', '```', clip(stderr), '```');
+  if (stderr) lines.push('stderr:', '```', clip(hidePaths(stderr)), '```');
   if (verdict === 'TLE') lines.push('(Did not finish within the time limit - suspect an infinite loop or a too-slow algorithm.)');
   return lines.join('\n');
 }
@@ -69,12 +73,13 @@ function buildPrompt({ code, language, problem, failures, totalFailing, dataFile
   return lines.filter((l) => l !== null).join('\n');
 }
 
-async function post(apiKey, model, body) {
+async function post(apiKey, model, body, base = API_BASE) {
   try {
-    return await fetch(`${API_BASE}/${encodeURIComponent(model)}:generateContent`, {
+    return await fetch(`${base}/${encodeURIComponent(model)}:generateContent`, {
       method: 'POST',
       headers: { 'x-goog-api-key': apiKey, 'content-type': 'application/json' },
       body: JSON.stringify(body),
+      redirect: 'error', // the key goes to Google only: fetch would send it on to wherever a redirect points
       signal: AbortSignal.timeout(120000),
     });
   } catch (e) {
@@ -149,4 +154,4 @@ async function explainFailures(apiKey, models, context, opts) {
   return callGemini(apiKey, Array.isArray(models) ? models : [models], buildPrompt(context), opts);
 }
 
-module.exports = { explainFailures, buildPrompt, withoutCode, MAX_FAILURES };
+module.exports = { explainFailures, buildPrompt, withoutCode, MAX_FAILURES, post }; // post: for tests

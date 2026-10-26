@@ -38,11 +38,10 @@ function diffHtml(expected, actual) {
     return `<div class="diff"><b>Your output has extra lines.</b> Line ${d.line} should not be there: <code>${esc(visible(d.actual))}</code></div>`;
   }
   const mark = (s) => {
-    const v = visible(s);
-    const head = esc(v.slice(0, d.index));
-    const cp = v.codePointAt(d.index);
-    const ch = cp === undefined ? undefined : String.fromCodePoint(cp); // a whole emoji, not half of it
-    return ch === undefined ? `${head}<mark>⏎</mark>` : `${head}<mark>${esc(ch)}</mark>${esc(v.slice(d.index + ch.length))}`;
+    const v = Array.from(visible(s)); // d.index counts characters
+    const head = esc(v.slice(0, d.index).join(''));
+    const ch = v[d.index];
+    return ch === undefined ? `${head}<mark>⏎</mark>` : `${head}<mark>${esc(ch)}</mark>${esc(v.slice(d.index + 1).join(''))}`;
   };
   return `<div class="diff"><b>First difference: line ${d.line}, column ${d.index + 1}</b>
     <div>Expected <code>${mark(d.expected)}</code></div><div>Yours <code>${mark(d.actual)}</code></div>
@@ -113,10 +112,13 @@ function singleResultHtml(title, input, expected, r) {
     </div>${r.stderr ? `<h4>stderr</h4><pre class="err">${esc(clip(r.stderr))}</pre>` : ''}`);
 }
 
+// A verdict tile of a passed test: the letter P, or a label that says Correct (not "Incorrect"). Same rule as the
+// Thonny plug-in's tile_passed().
+const tilePassed = (t) => t.letter.trim() === 'P' || /^\s*correct\b/i.test(t.label);
+
 // grader result from parseSubmissionPage()
 function submissionHtml(problem, id, g) {
-  // "Correct" is a pass; "Incorrect" is not
-  const tiles = g.tests.map((t) => `<span class="tile ${/(?<![a-z])correct/i.test(t.label) ? 'ok' : 'bad'}" title="Test ${t.n}: ${esc(t.label)}">${esc(t.letter)}</span>`).join('');
+  const tiles = g.tests.map((t) => `<span class="tile ${tilePassed(t) ? 'ok' : 'bad'}" title="Test ${t.n}: ${esc(t.label)}">${esc(t.letter)}</span>`).join('');
   const state = g.timedOut ? 'Still grading after 90 s - check the grader site'
     : g.done ? `${g.points ?? '?'} / ${g.max ?? '?'} points` : `Grading... (${esc(g.status || 'queued')})`;
   return page(`<div class="sum"><b>${esc(problem.code)}</b> submitted as #${esc(id)}</div>
