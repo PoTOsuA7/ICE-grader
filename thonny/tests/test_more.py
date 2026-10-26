@@ -1,4 +1,5 @@
 """AI explain (against a fake Gemini, never the real one), copying a file to the clipboard, drawing statements."""
+import gc
 import os
 import shutil
 import subprocess
@@ -21,6 +22,15 @@ from thonnycontrib.ice_grader.statement import (GAP, StatementView, can_show_pdf
                                                 spot_at, wheel_steps)
 
 FAILURE = {"n": 2, "verdict": "FAIL", "input": "3\n", "expected": "6\n", "actual": "5\n", "stderr": ""}
+
+
+def free_tk(test):
+    """Close a test's window and free Tk now, on the main thread: macOS aborts the whole run when Tk is freed from
+    another thread, e.g. when a later test's worker thread happens to run the garbage collector."""
+    test.root.destroy()
+    for name in ("root", "view"):
+        test.__dict__.pop(name, None)
+    gc.collect()
 
 
 def answer(text):
@@ -232,7 +242,7 @@ class StatementPanel(unittest.TestCase):
         self.view.canvas.winfo_height = lambda: 300
 
     def tearDown(self):
-        self.root.destroy()
+        free_tk(self)
 
     def test_a_pdf_still_being_drawn_does_not_cover_a_statement_opened_since(self):
         go = threading.Event()
@@ -265,7 +275,7 @@ class NarrowPanels(unittest.TestCase):
         self.root.attributes("-alpha", 0.0)
 
     def tearDown(self):
-        self.root.destroy()
+        free_tk(self)
 
     def shown(self, widget):
         widget.pack(fill="both", expand=True)

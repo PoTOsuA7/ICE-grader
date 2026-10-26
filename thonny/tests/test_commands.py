@@ -10,6 +10,7 @@ import unittest
 from unittest import mock
 
 import thonnycontrib.ice_grader as ig
+from test_more import free_tk
 from thonnycontrib.ice_grader.core import Core
 from thonnycontrib.ice_grader.passwords import MemorySecrets
 from test_client import FakeClient
@@ -265,7 +266,7 @@ class ResultsPanel(unittest.TestCase):
         self.view = ig.GraderResultsView(self.root)
 
     def tearDown(self):
-        self.root.destroy()
+        free_tk(self)
 
     def text(self):
         return self.view.text.get("1.0", "end").strip()

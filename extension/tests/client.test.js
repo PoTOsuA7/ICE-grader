@@ -225,9 +225,11 @@ test('your submission is read once: its verdict per test and the code it was for
 test('a grader that does not answer is given up on after the time asked for', async () => {
   const real = globalThis.fetch;
   globalThis.fetch = (url, opts) => new Promise((_, reject) => opts.signal.addEventListener('abort', () => reject(opts.signal.reason)));
+  // AbortSignal.timeout's timer doesn't keep Node running, and this fake grader has nothing else that would
+  const alive = setTimeout(() => {}, 10000);
   try {
     const started = Date.now();
     await assert.rejects(() => client().fetchSubmission('5', 50));
     assert.ok(Date.now() - started < 5000, `took ${Date.now() - started} ms`);
-  } finally { globalThis.fetch = real; }
+  } finally { globalThis.fetch = real; clearTimeout(alive); }
 });
