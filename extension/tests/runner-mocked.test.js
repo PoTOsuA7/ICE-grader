@@ -43,6 +43,9 @@ test('on a laptop with only Thonny, Thonny\'s own Python is used', async () => {
   });
   assert.strictEqual(await runner.findPython('python', [thonny]), thonny);
   assert.deepStrictEqual(calls.map((c) => c[0]), ['python', 'py', 'python3', thonny], 'only after the usual commands');
+  // the next run doesn't look again (a "python" that hangs would cost 10 s every time)
+  assert.strictEqual(await runner.findPython('python', [thonny]), thonny);
+  assert.strictEqual(calls.length, 4);
 });
 
 test('C is linked with -lm (after the source), C++ is compiled as C++17', async () => {

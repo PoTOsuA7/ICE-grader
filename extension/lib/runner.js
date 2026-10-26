@@ -46,11 +46,19 @@ const unquote = (s) => (typeof s === 'string' ? s.trim().replace(/^"(.*)"$/, '$1
 
 // The Windows "python" command is often a Microsoft Store stub; fall back to the "py" launcher, then Thonny's Python.
 // Only Python 3 counts: the grader runs Python 3, and under Python 2 input() and print behave differently.
+// The Python found, by the commands tried: looked for once, not before every run (a "python" that hangs, like a
+// broken Microsoft Store stub, would otherwise cost its 10 s timeout each time).
+const foundPython = new Map();
 async function findPython(preferred, extras = thonnyPythons()) {
   const tried = [...new Set([unquote(preferred), 'py', 'python3', ...extras].filter(Boolean))];
+  const key = tried.join('\n');
+  if (foundPython.has(key)) return foundPython.get(key);
   for (const c of tried) {
     const r = await execP(c, ['--version'], { timeout: 10000 });
-    if (!r.err && /Python 3\./.test(r.stdout + r.stderr)) return c;
+    if (!r.err && /Python 3\./.test(r.stdout + r.stderr)) {
+      foundPython.set(key, c);
+      return c;
+    }
   }
   throw new Error(`Python 3 not found (tried ${tried.map((c) => `"${c}"`).join(', ')}). Install Python 3 (or Thonny) or set nattee.pythonPath.`);
 }
