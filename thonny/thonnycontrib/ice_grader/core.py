@@ -6,16 +6,19 @@ import os
 import re
 import shutil
 import threading
+import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 
 from . import runner
 from .client import GraderClient, GraderError, SessionExpired
+from .diff import code_hash
 from .layout import safe_name, chapter_of
 from .passwords import KeyringSecrets
 
 DEFAULT_ROOT = "https://2190101.nattee.net/"
 TESTS_FILE = "tests.v1.json"
+SUBMISSION_FILE = "submission.json"  # your latest submission's verdicts, for tests that can't be checked here
 
 
 class NotSignedIn(GraderError):
@@ -38,6 +41,7 @@ class Core:
         self.client = client_class(root_url, session.get("cookies")) if self.uid else None
         self.problems = self._read_json("problems.json") or []
         self.links = self._read_json("links.json") or {}  # file -> problem id, for files not named after a problem
+        self._lookups = {}  # submission id -> when it was last asked for
 
     # ---- files
 
@@ -190,14 +194,56 @@ class Core:
     def is_saved(self, p):
         return os.path.exists(self._path(p["id"], TESTS_FILE)) or not p.get("has_testcases", True)
 
+    def last_submission(self, p):
+        """Your latest submission's verdicts {id, tests, code} (code: code_hash of what was submitted), for tests that
+        can't be checked here. Saved when you submit from here; else read once from its page on the grader (only while
+        signed in, at most once a minute) and saved, so later runs need no request and it works offline.
+        None: not known."""
+        saved = self._read_json(p["id"], SUBMISSION_FILE)
+        latest = p.get("last_submission_id")
+        if saved and (not latest or int(saved["id"]) >= int(latest)):
+            return saved
+        if not latest or not self.client or time.time() - self._lookups.get(latest, 0) < 60:
+            return None
+        self._lookups[latest] = time.time()
+        try:
+            g = self._call(lambda c: c.fetch_submission(latest, timeout=10))
+        except (OSError, GraderError):
+            return None  # offline or signed out: the test just says to submit
+        if not g["done"]:
+            return None
+        sub = {"id": latest, "tests": g["tests"], "code": code_hash(g["source"]) if g["source"] is not None else None}
+        self._write_json(sub, p["id"], SUBMISSION_FILE)
+        return sub
+
     def run_tests(self, python, file, p, time_limit, on_result=None):
+        """-> (cases, results). A test that can't be checked here (SKIP) shows the grader's verdict on it from your
+        last submission, if known: result["last_submit"] (see runner.last_submit_on)."""
         cases = self.tests(p)
-        return cases, runner.run_tests(python, file, cases, time_limit, on_result)
+        try:
+            with open(file, encoding="utf-8", errors="replace") as f:
+                code = code_hash(f.read())
+        except OSError:
+            code = None
+        found = []  # the last submission, looked up at the first skipped test
+
+        def each(i, r):
+            if r["verdict"] == "SKIP":
+                if not found:
+                    found.append(self.last_submission(p))
+                seen = runner.last_submit_on(found[0], i, len(cases), code)
+                if seen:
+                    r["last_submit"] = seen
+            if on_result:
+                on_result(i, r)
+        return cases, runner.run_tests(python, file, cases, time_limit, each)
 
     def submit(self, p, source, on_update=None):
         sub = self._call(lambda c: c.submit(p["id"], source))
         result = self._call(lambda c: c.wait_for_grade(sub["id"], on_update=on_update))
         result["id"] = sub["id"]
+        if result["done"]:  # for tests skipped here
+            self._write_json({"id": sub["id"], "tests": result["tests"], "code": code_hash(source)}, p["id"], SUBMISSION_FILE)
         try:
             self.refresh_problems()  # new score in the list
         except (OSError, GraderError):

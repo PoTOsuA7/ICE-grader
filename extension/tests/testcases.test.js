@@ -235,3 +235,84 @@ test('a program that exits but leaves a child holding its output is not a TLE', 
   assert.deepStrictEqual(res.map((r) => r.verdict), ['PASS']);
   assert.ok(Date.now() - started < 2500, `took ${Date.now() - started} ms`);
 });
+
+// ---- cut-off expected outputs: what is checked, and tests that can't be checked here
+const { checkedPart, codeHash, normalize } = require('../lib/diff');
+const { lastSubmitOn } = require('../lib/runner');
+
+test('a cut-off expected output: a split Thai character, CRLF and trailing spaces never fail a right answer', () => {
+  const thai = 'สวัสดีครับ'; // each character is 3 bytes in UTF-8
+  for (const rest of ['�', '��', '']) {
+    const tc = { output: `1\n${thai.slice(0, 4)}${rest}`, partialOutput: true };
+    const cmp = comparedOutputs(tc, `1\n${thai}\n2\n`);
+    assert.strictEqual(cmp.expected, cmp.actual, JSON.stringify(rest));
+    assert.notStrictEqual(comparedOutputs(tc, `1\n${thai.replace('ว', 'า')}\n`).actual, cmp.expected, 'a wrong character still fails');
+  }
+  const crlf = { output: 'a  \r\nb\r\ncde', partialOutput: true };
+  const right = comparedOutputs(crlf, 'a\nb   \ncdefg\n');
+  assert.strictEqual(right.expected, right.actual);
+  // the cut fell between \r and \n: line b is not known to be complete, so only its start counts
+  assert.strictEqual(checkedPart('a\r\nbc\r'), 'line 1 and the start of line 2');
+  // a cut just after a space mid-line: "1 2" (the line ends there) and "1 2 3 4" both fit what is shown
+  const space = { output: '0\n1 2 3', partialOutput: true };
+  for (const mine of ['0\n1 2\n', '0\n1 2 3 4\n']) {
+    const c = comparedOutputs(space, mine);
+    assert.strictEqual(normalize(c.expected), normalize(c.actual), mine);
+  }
+  const wrong = comparedOutputs(space, '0\n1 23\n');
+  assert.notStrictEqual(normalize(wrong.expected), normalize(wrong.actual));
+});
+
+test('says which lines of a cut-off expected output were checked', () => {
+  assert.strictEqual(checkedPart('a\nb\nc\nd-cut'), 'lines 1-3 and the start of line 4');
+  assert.strictEqual(checkedPart('a\nb-cut'), 'line 1 and the start of line 2');
+  assert.strictEqual(checkedPart('one long line, cut'), 'the start of line 1');
+  // even when what is shown ends with a line break, the last line isn't trusted to be complete
+  assert.strictEqual(checkedPart('a\nb\nc\n'), 'lines 1-2');
+  const cases = [{ input: '1\n', output: 'a\nb\nc-cut', partialOutput: true }, { input: '1\n', output: 'a\n' }];
+  const html = localResultsHtml({ code: 'X' }, cases, [
+    { verdict: 'PASS', ms: 3, stdout: 'a\nb\nc-cut-more\n', stderr: '' }, { verdict: 'PASS', ms: 3, stdout: 'a\n', stderr: '' }]);
+  assert.strictEqual((html.match(/Checked only/g) || []).length, 1, 'only on the cut-off test');
+  assert.match(html, /Checked only lines 1-2 and the start of line 3: the grader shows just the start of the expected output\./);
+  const crash = localResultsHtml({ code: 'X' }, cases.slice(0, 1), [{ verdict: 'RE', ms: 3, stdout: '', stderr: 'boom' }]);
+  assert.doesNotMatch(crash, /Checked only/, 'nothing was compared on a crash');
+});
+
+test('a fingerprint of the code that ignores line endings, trailing spaces and a byte order mark', () => {
+  const h = codeHash('n = int(input())\nprint(n)\n');
+  assert.strictEqual(h, codeHash('﻿n = int(input())  \r\nprint(n)\r\n\r\n'));
+  assert.notStrictEqual(h, codeHash('n = int(input())\nprint(n + 1)\n'));
+  // the Thonny plug-in computes the same (thonny/tests/test_pages.py)
+  assert.strictEqual(codeHash('print(1)\n'), 'd287bb7f9d15abdc5b6e98536263815744b6ef21c8f3c839fc434ca70d8efe99');
+});
+
+test('a test that can\'t be checked here gets the verdict of the last submission, by test number', () => {
+  const sub = { id: '700', code: codeHash('print(1)'), tests: [
+    { n: 1, total: 2, label: 'Correct', letter: 'P' }, { n: 2, total: 2, label: 'Wrong answer', letter: '-' }] };
+  assert.deepStrictEqual(lastSubmitOn(sub, 1, 2, codeHash('print(1)\n')), { id: '700', label: 'Wrong answer', same: true });
+  assert.deepStrictEqual(lastSubmitOn(sub, 0, 2, codeHash('print(2)')), { id: '700', label: 'Correct', same: false });
+  assert.strictEqual(lastSubmitOn({ ...sub, code: null }, 0, 2, codeHash('x')).same, null, 'code not known');
+  assert.strictEqual(lastSubmitOn(sub, 0, 3, 'h'), null, 'graded on other tests than shown here: numbers may not match');
+  assert.strictEqual(lastSubmitOn(sub, 2, 2, 'h'), null);
+  assert.strictEqual(lastSubmitOn(null, 0, 2, 'h'), null);
+  assert.strictEqual(lastSubmitOn({ id: '1', tests: [] }, 0, 2, 'h'), null, 'e.g. a compile error');
+});
+
+test('a skipped test shows the last submission\'s verdict on it, short, and is never counted as passed', () => {
+  const cases = [{ input: '1\n', output: '1\n' }, { input: 'x'.repeat(2048), output: '5\n', partialInput: true }];
+  const skip = (lastSubmit) => [{ verdict: 'PASS', ms: 4, stdout: '1\n', stderr: '' },
+    { verdict: 'SKIP', skipped: 'input', ms: 0, stdout: '', stderr: '', ...(lastSubmit ? { lastSubmit } : {}) }];
+  const same = localResultsHtml({ code: 'X' }, cases, skip({ id: '700', label: 'Correct', same: true }));
+  assert.match(same, /1\/1 passed <span class="ms">\(1 skipped\)/);
+  assert.match(same, /SKIP<\/span> Test 2 <span class="ms">last submit: Correct<\/span>/);
+  assert.match(same, /so it can't be run here\. Last submit #700 \(this same code\): Correct\./);
+  const changed = localResultsHtml({ code: 'X' }, cases, skip({ id: '700', label: 'Wrong answer.', same: false }));
+  assert.match(changed, /Last submit #700 \(different code\): Wrong answer\. Submit to check this version\./);
+  assert.match(localResultsHtml({ code: 'X' }, cases, skip({ id: '7', label: 'Correct', same: null })), /Last submit #7: Correct\./);
+  const none = localResultsHtml({ code: 'X' }, cases, skip(null));
+  assert.match(none, /so it can't be run here\. Submit to check it\./);
+  assert.match(none, /SKIP<\/span> Test 2 <span class="ms"><\/span>/, 'no "0 ms" for a test that never ran');
+  assert.doesNotMatch(none, /last submit/i);
+  const evil = localResultsHtml({ code: 'X' }, cases, skip({ id: '7', label: '<b>x</b>', same: true }));
+  assert.ok(!evil.includes('<b>x</b>') && evil.includes('&lt;b&gt;x&lt;/b&gt;'), 'the grader\'s text is escaped');
+});

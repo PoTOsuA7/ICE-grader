@@ -161,3 +161,31 @@ test('waiting for a grade: a page without the grading status fails at once inste
     await assert.rejects(() => client().waitForGrade('3', { intervalMs: 1 }), /Session expired while waiting for submission #3/);
   } finally { srv.restore(); }
 });
+
+test('your submission is read once: its verdict per test and the code it was for', async () => {
+  const tile = (n, label, letter) => `<span class="verdict-tile" title="Test ${n} of 2: ${label}">${letter}</span>`;
+  const page = row('Points', '50/100') + row('Result', tile(1, 'Correct', 'P') + tile(2, 'Wrong answer', '-')) +
+    row('Grading Task Status', 'done') + "<textarea id='text_sourcecode' style='display:none'>print(1 &lt; 2)\n</textarea>";
+  const srv = fakeServer({
+    'GET /submissions/5': () => [200, html(page)],
+    'GET /submissions/6': () => [200, html(row('Grading Task Status', 'done'))],
+    'GET /submissions/7': () => [200, loginForm()],
+  });
+  try {
+    const s = await client().fetchSubmission('5');
+    assert.deepStrictEqual([s.done, s.source, s.tests.map((t) => t.label)], [true, 'print(1 < 2)\n', ['Correct', 'Wrong answer']]);
+    assert.strictEqual((await client().fetchSubmission('6')).source, null, 'a page without the code');
+    await assert.rejects(() => client().fetchSubmission('7'), /Session expired while reading submission #7/);
+    assert.strictEqual(srv.seen.length, 3, 'one request each, no polling');
+  } finally { srv.restore(); }
+});
+
+test('a grader that does not answer is given up on after the time asked for', async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = (url, opts) => new Promise((_, reject) => opts.signal.addEventListener('abort', () => reject(opts.signal.reason)));
+  try {
+    const started = Date.now();
+    await assert.rejects(() => client().fetchSubmission('5', 50));
+    assert.ok(Date.now() - started < 5000, `took ${Date.now() - started} ms`);
+  } finally { globalThis.fetch = real; }
+});

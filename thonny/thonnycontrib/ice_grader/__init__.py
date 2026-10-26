@@ -19,7 +19,7 @@ from .ai import DEFAULT_MODEL, FALLBACK_MODEL, AIError, build_prompt, call_gemin
 from .client import GraderError, SessionExpired
 from .clipboard import copy_file
 from .core import DEFAULT_ROOT, Core, NotSignedIn
-from .diff import compared_outputs, first_difference, visible
+from .diff import checked_part, compared_outputs, first_difference, visible
 from .layout import chapter_of, safe_name, solution_path
 from .statement import StatementView, can_show_pdfs
 
@@ -832,7 +832,6 @@ class GraderResultsView(ttk.Frame):
         self.text.tag_configure("title", font=bold)
         self.text.tag_configure("dim", foreground="#8b949e")
         self.total = 0
-        self.passed = 0
         self.write("Run tests (the button in the Grader panel, or save your file) to see the results here.\n", "dim")
 
     def clear(self):
@@ -844,7 +843,6 @@ class GraderResultsView(ttk.Frame):
 
     def start(self, p, filename):
         self.clear()
-        self.passed = 0
         self.explain_button.configure(state="disabled")
         self.hint.configure(text="")
         self.write("%s - running %s\n" % (p["code"], os.path.basename(filename)), "title")
@@ -854,15 +852,16 @@ class GraderResultsView(ttk.Frame):
 
     def add(self, i, tc, r):
         verdict = r["verdict"]
-        if verdict == "PASS":
-            self.passed += 1
         self.write("\nTest %d of %d  " % (i + 1, self.total))
         self.write(verdict, verdict)
-        self.write("  %d ms\n" % r["ms"], "dim")
+        # a test whose input can't run here has no time
+        self.write("\n" if r.get("skipped") == "input" else "  %d ms\n" % r["ms"], "dim")
         if verdict == "SKIP":
             why = ("the grader shows only the start of its input" if r.get("skipped") == "input"
                    else "the grader shows too little of its expected output")
-            self.write("  Can't check here: %s. Submit to check it.\n" % why, "dim")
+            # then the last submission's verdict on its own line, or what to do
+            s = r.get("last_submit")
+            self.write("  Can't check here: %s.%s%s\n" % (why, "\n  " if s else " ", last_submit_text(s)), "dim")
         elif verdict == "TLE":
             self.write("  Took longer than the time limit (an endless loop, or waiting for input that isn't there).\n")
         elif verdict == "RE":
@@ -881,14 +880,14 @@ class GraderResultsView(ttk.Frame):
             self.write(_indent(cmp["actual"], 12) if cmp["actual"].strip() else "    (nothing)\n")
             if diff:
                 self.write("  " + _explain(diff) + "\n", "FAIL")
+        if tc.get("partial_output") and verdict in ("PASS", "FAIL"):
+            self.write("  Checked only %s: the grader shows just the start of the expected output.\n"
+                       % checked_part(tc["output"]), "dim")
 
     def finish(self, cases, results):
         """The summary goes at the top, under the title, and the view scrolls back up to it. -> (summary, tag)"""
-        n = len(results)
-        skipped = sum(1 for r in results if r["verdict"] == "SKIP")
         failing = sum(1 for r in results if r["verdict"] in FAILED)
-        tag = "PASS" if self.passed + skipped == n and self.passed else "FAIL"
-        summary = "%d of %d passed%s" % (self.passed, n, " (%d skipped)" % skipped if skipped else "")
+        summary, tag = summary_text(results)
         self.text.direct_insert("2.0", summary + "\n", (tag, "title"))
         self.text.see("1.0")
         if failing:
@@ -935,6 +934,26 @@ class GraderResultsView(ttk.Frame):
         for t in r["tests"]:
             good = t["letter"].strip().upper() in ("P", "")
             self.write("Test %d: %s\n" % (t["n"], t["label"]), "PASS" if good else "FAIL")
+
+
+def summary_text(results):
+    """"9 of 9 passed (1 skipped)", like the VS Code extension: a test that can't be checked here counts neither way.
+    -> (text, colour tag)"""
+    passed = sum(1 for r in results if r["verdict"] == "PASS")
+    skipped = sum(1 for r in results if r["verdict"] == "SKIP")
+    tag = "PASS" if passed and passed + skipped == len(results) else "FAIL"
+    return "%d of %d passed%s" % (passed, len(results) - skipped, " (%d skipped)" % skipped if skipped else ""), tag
+
+
+def last_submit_text(s):
+    """The grader's verdict from your last submission (a result's "last_submit", see runner.last_submit_on), else
+    what to do."""
+    if not s:
+        return "Submit to check it."
+    label = re.sub(r"[.\s]+$", "", s["label"])
+    if s["same"] is False:
+        return "Last submit #%s (different code): %s. Submit to check this version." % (s["id"], label)
+    return "Last submit #%s%s: %s." % (s["id"], " (this same code)" if s["same"] else "", label)
 
 
 def _natural(s):

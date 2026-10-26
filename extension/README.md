@@ -35,7 +35,7 @@ Using Thonny instead? Install the [thonny-ice-grader](https://pypi.org/project/t
 Tools > Manage plug-ins, search `thonny-ice-grader`.
 
 ## Good to know
-- The grader shows only the first 2 KB of each test. A test with a longer input shows as SKIP: submit to check it.
+- The grader shows only the first 2 KB of each test. A test with a longer input shows as SKIP, with your last submission's result on it; submit to check it. A longer expected output is checked as far as it is shown.
 - Your password and Gemini key are kept in VS Code's secret storage, and your sign-in is only sent to the grader.
 - On Gemini's free tier Google may use what you send to improve its products. Nothing is sent until you ask.
 - Settings: search `nattee` in Settings (Python path, compiler, time limit, run on save, ...).

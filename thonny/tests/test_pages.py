@@ -3,8 +3,10 @@ import unittest
 
 from thonnycontrib.ice_grader.client import (parse_data_files, parse_problem_list, parse_submission_page,
                                              parse_submission_source, parse_submit_form, parse_testcase_page)
-from thonnycontrib.ice_grader.diff import compared_outputs, first_difference, normalize, visible
+from thonnycontrib.ice_grader import last_submit_text, summary_text
+from thonnycontrib.ice_grader.diff import checked_part, code_hash, compared_outputs, first_difference, normalize, visible
 from thonnycontrib.ice_grader.layout import chapter_of, safe_name, solution_path
+from thonnycontrib.ice_grader.runner import last_submit_on
 
 
 def row(pid, code, status, score, sub):
@@ -134,6 +136,65 @@ class Compare(unittest.TestCase):
         tc = {"output": "1\n2\n34", "partial_output": True}
         self.assertEqual(compared_outputs(tc, "1\n2\n345\n6\n"), {"expected": "1\n2\n3", "actual": "1\n2\n3"})
         self.assertTrue(compared_outputs({"output": "x", "partial_output": True}, "y")["unchecked"])
+
+    def test_a_split_thai_character_crlf_and_trailing_spaces_never_fail_a_right_answer(self):
+        thai = "สวัสดีครับ"  # each character is 3 bytes in UTF-8
+        for rest in ("�", "��", ""):
+            tc = {"output": "1\n" + thai[:4] + rest, "partial_output": True}
+            cmp = compared_outputs(tc, "1\n%s\n2\n" % thai)
+            self.assertEqual(cmp["expected"], cmp["actual"], repr(rest))
+            self.assertNotEqual(compared_outputs(tc, "1\n%s\n" % thai.replace("ว", "า"))["actual"], cmp["expected"])
+        right = compared_outputs({"output": "a  \r\nb\r\ncde", "partial_output": True}, "a\nb   \ncdefg\n")
+        self.assertEqual(right["expected"], right["actual"])
+        self.assertEqual(checked_part("a\r\nbc\r"), "line 1 and the start of line 2")
+        space = {"output": "0\n1 2 3", "partial_output": True}  # cut just after a space mid-line
+        for mine in ("0\n1 2\n", "0\n1 2 3 4\n"):
+            c = compared_outputs(space, mine)
+            self.assertEqual(normalize(c["expected"]), normalize(c["actual"]), mine)
+        wrong = compared_outputs(space, "0\n1 23\n")
+        self.assertNotEqual(normalize(wrong["expected"]), normalize(wrong["actual"]))
+
+    def test_says_which_lines_of_a_cut_off_expected_output_were_checked(self):
+        self.assertEqual(checked_part("a\nb\nc\nd-cut"), "lines 1-3 and the start of line 4")
+        self.assertEqual(checked_part("a\nb-cut"), "line 1 and the start of line 2")
+        self.assertEqual(checked_part("one long line, cut"), "the start of line 1")
+        self.assertEqual(checked_part("a\nb\nc\n"), "lines 1-2")  # the last line isn't trusted to be complete
+
+    def test_a_fingerprint_of_the_code_that_ignores_line_endings_trailing_spaces_and_a_byte_order_mark(self):
+        h = code_hash("n = int(input())\nprint(n)\n")
+        self.assertEqual(h, code_hash("﻿n = int(input())  \r\nprint(n)\r\n\r\n"))
+        self.assertNotEqual(h, code_hash("n = int(input())\nprint(n + 1)\n"))
+        # the VS Code extension computes the same (extension/tests/testcases.test.js)
+        self.assertEqual(code_hash("print(1)\n"), "d287bb7f9d15abdc5b6e98536263815744b6ef21c8f3c839fc434ca70d8efe99")
+
+
+class Skipped(unittest.TestCase):
+    """A test the grader shows too little of to check here: the verdict from your last submission instead."""
+    SUB = {"id": "700", "code": code_hash("print(1)"),
+           "tests": [{"n": 1, "total": 2, "label": "Correct", "letter": "P"},
+                     {"n": 2, "total": 2, "label": "Wrong answer", "letter": "-"}]}
+
+    def test_the_verdict_of_the_last_submission_by_test_number(self):
+        self.assertEqual(last_submit_on(self.SUB, 1, 2, code_hash("print(1)\n")),
+                         {"id": "700", "label": "Wrong answer", "same": True})
+        self.assertEqual(last_submit_on(self.SUB, 0, 2, code_hash("print(2)")), {"id": "700", "label": "Correct", "same": False})
+        self.assertIsNone(last_submit_on(dict(self.SUB, code=None), 0, 2, "h")["same"])  # code not known
+        self.assertIsNone(last_submit_on(self.SUB, 0, 3, "h"))  # graded on other tests than shown here
+        self.assertIsNone(last_submit_on(self.SUB, 2, 2, "h"))
+        self.assertIsNone(last_submit_on(None, 0, 2, "h"))
+        self.assertIsNone(last_submit_on({"id": "1", "tests": []}, 0, 2, "h"))  # e.g. a compile error
+
+    def test_short_text_and_never_counted_as_passed(self):
+        self.assertEqual(last_submit_text({"id": "700", "label": "Correct", "same": True}),
+                         "Last submit #700 (this same code): Correct.")
+        self.assertEqual(last_submit_text({"id": "700", "label": "Wrong answer.", "same": False}),
+                         "Last submit #700 (different code): Wrong answer. Submit to check this version.")
+        self.assertEqual(last_submit_text({"id": "7", "label": "Correct", "same": None}), "Last submit #7: Correct.")
+        self.assertEqual(last_submit_text(None), "Submit to check it.")
+        skip = {"verdict": "SKIP", "last_submit": {"id": "7", "label": "Correct", "same": True}}
+        self.assertEqual(summary_text([{"verdict": "PASS"}, skip]), ("1 of 1 passed (1 skipped)", "PASS"))
+        self.assertEqual(summary_text([{"verdict": "FAIL"}, {"verdict": "PASS"}]), ("1 of 2 passed", "FAIL"))
+        self.assertEqual(summary_text([skip]), ("0 of 0 passed (1 skipped)", "FAIL"))
 
 
 class Layout(unittest.TestCase):

@@ -31,7 +31,7 @@ Needs Thonny 4.0 or newer.
 3. Save your file, or click **Run tests**.
 
 ## Good to know
-- The grader shows only the first 2 KB of each test. A test with a longer input shows as SKIP: submit to check it.
+- The grader shows only the first 2 KB of each test. A test with a longer input shows as SKIP, with your last submission's result on it; submit to check it. A longer expected output is checked as far as it is shown.
 - Your password and Gemini key are kept in your computer's password store (Windows Credential Manager, the macOS
   Keychain), never in a file. Sign out removes the password.
 - On Gemini's free tier Google may use what you send to improve its products.

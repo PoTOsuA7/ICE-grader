@@ -115,6 +115,16 @@ def run_one(python, file, text, time_limit, cwd=None):
     return {"stdout": decode(out), "stderr": decode(err), "code": proc.returncode, "timed_out": timed_out, "ms": ms}
 
 
+def last_submit_on(sub, i, count, code):
+    """For a test that can't be checked here (SKIP): the grader's verdict on it in your last submission
+    (sub: {id, tests: [{n, total, label}], code}). Only when that submission ran as many tests as there are here, so
+    the test numbers match. -> {id, label, same} (same: it was this code, None when not known) or None"""
+    t = next((t for t in (sub or {}).get("tests") or [] if t["n"] == i + 1 and t["total"] == count), None)
+    if not t:
+        return None
+    return {"id": sub["id"], "label": t["label"], "same": sub["code"] == code if sub.get("code") and code else None}
+
+
 def run_tests(python, file, cases, time_limit=DEFAULT_TIME_LIMIT, on_result=None):
     """-> [{verdict: 'PASS'|'FAIL'|'TLE'|'RE'|'SKIP', ms, stdout, stderr, skipped?}]
     SKIP: the grader only shows the start of this test's input (skipped: 'input'), so it can't be run here,

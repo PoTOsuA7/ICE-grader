@@ -503,3 +503,54 @@ test('Download All Statements and My Solutions says what failed; no folder chose
   await h.commands['nattee.exportAll']();
   assert.match(h.log.warnings.at(-1).m, /saved 2 of 3 problems \(2 with your latest submitted code\)\. Couldn't download 05_List_16\./);
 });
+
+// ---- a test too long to run here (the grader shows only its first 2 KB): the verdict from your last submission
+const CUT_CASES = [{ input: '1\n', output: '1\n' }, { input: '9 '.repeat(1024), output: '5\n', partialInput: true }];
+const skipCut = (file, cases) => cases.map((c) => (c.partialInput
+  ? { verdict: 'SKIP', skipped: 'input', ms: 0, stdout: '', stderr: '' } : { verdict: 'PASS', ms: 1, stdout: c.output, stderr: '' }));
+const VERDICTS = [{ n: 1, total: 2, label: 'Correct', letter: 'P' }, { n: 2, total: 2, label: 'Wrong answer', letter: '-' }];
+const withSubmission = (id) => [{ id: '1', code: '05_List_15', name: '05_List_15_Foo', hasTestcases: true, status: 'inprogress', score: 50, lastSubmissionId: id }];
+
+test('a skipped test shows your last submission\'s verdict: read from the grader once, then from the saved copy', async () => {
+  const h = loadExtension({ secrets: SIGNED_IN, problems: withSubmission('700'), cases: CUT_CASES, runTests: skipCut,
+    submissions: { 700: { done: true, readable: true, tests: VERDICTS, source: 'print(1)\r\n\r\n' } } });
+  await settle(h);
+  const doc = h.makeDoc(FILE, 'print(1)');
+  h.setEditor(doc);
+  await h.commands['nattee.runTests']();
+  assert.match(h.log.view.webview.html, /Test 2 <span class="ms">last submit: Wrong answer<\/span>/);
+  assert.match(h.log.view.webview.html, /Last submit #700 \(this same code\): Wrong answer\./);
+  assert.match(h.log.infos.at(-1), /05_List_15: 1\/1 tests passed \(1 skipped\)/, 'never counted as passed');
+  doc.edit('print(2)');
+  await h.commands['nattee.runTests']();
+  assert.match(h.log.view.webview.html, /Last submit #700 \(different code\): Wrong answer\. Submit to check this version\./);
+  assert.deepStrictEqual(h.log.fetchedSubmissions, ['700'], 'asked once; later runs use the saved copy');
+});
+
+test('without the grader a skipped test just says to submit, and the grader isn\'t asked again on every run', async () => {
+  const h = loadExtension({ secrets: SIGNED_IN, problems: withSubmission('700'), cases: CUT_CASES, runTests: skipCut });
+  await settle(h);
+  h.setEditor(h.makeDoc(FILE, 'print(1)'));
+  await h.commands['nattee.runTests']();
+  await h.commands['nattee.runTests']();
+  assert.match(h.log.view.webview.html, /so it can't be run here\. Submit to check it\./);
+  assert.deepStrictEqual(h.log.fetchedSubmissions, ['700'], 'one try, not one per run');
+  // no test skipped: nothing is asked at all
+  const plain = loadExtension({ secrets: SIGNED_IN, problems: withSubmission('700') });
+  await settle(plain);
+  plain.setEditor(plain.makeDoc(FILE));
+  await plain.commands['nattee.runTests']();
+  assert.deepStrictEqual(plain.log.fetchedSubmissions, []);
+});
+
+test('submitting from here keeps the grader\'s verdicts, so a skipped test shows them with no extra request', async () => {
+  const h = loadExtension({ secrets: SIGNED_IN, problems: withSubmission('9'), cases: CUT_CASES, runTests: skipCut,
+    warnAnswer: 'Submit', gradeTests: VERDICTS.map((t) => ({ ...t, label: 'Correct', letter: 'P' })) });
+  await settle(h);
+  h.setEditor(h.makeDoc(FILE, 'print(1)'));
+  await h.commands['nattee.submit']();
+  assert.strictEqual(h.log.submitted.length, 1);
+  await h.commands['nattee.runTests']();
+  assert.match(h.log.view.webview.html, /Last submit #9 \(this same code\): Correct\./);
+  assert.deepStrictEqual(h.log.fetchedSubmissions, []);
+});

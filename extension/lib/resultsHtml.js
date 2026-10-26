@@ -1,6 +1,6 @@
 'use strict';
 // HTML for the "Test Results" sidebar view. Pure functions (no VS Code API) so they can be unit-tested.
-const { firstDifference, visible, comparedOutputs } = require('./diff');
+const { firstDifference, visible, comparedOutputs, checkedPart } = require('./diff');
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const clip = (s) => (s.length > 3000 ? s.slice(0, 3000) + ' ... (truncated)' : s);
@@ -48,9 +48,22 @@ function diffHtml(expected, actual) {
     ${d.spacingOnly ? '<div class="hint">Only the spacing differs. Spaces inside a line (shown as ·) must match exactly; only trailing spaces are ignored.</div>' : ''}</div>`;
 }
 
-const SKIP_NOTE = '<div class="hint">The grader only shows the start of this test\'s input, so it can\'t be run here. Submit to check it.</div>';
-const SKIP_OUTPUT_NOTE = '<div class="hint">The grader shows too little of this test\'s expected output to check it here. Submit to check it.</div>';
-const PARTIAL_NOTE = '<div class="hint">The grader only shows the start of the expected output, so only those lines were checked.</div>';
+// The grader's verdict from your last submission (r.lastSubmit, see runner.lastSubmitOn), else what to do.
+function lastSubmitText(s) {
+  if (!s) return 'Submit to check it.';
+  const label = s.label.replace(/[.\s]+$/, '');
+  return s.same === false ? `Last submit #${s.id} (different code): ${label}. Submit to check this version.`
+    : `Last submit #${s.id}${s.same ? ' (this same code)' : ''}: ${label}.`;
+}
+
+// Why a SKIP test wasn't checked here, and what is known about it.
+function skipNote(r) {
+  const why = r.skipped === 'output' ? 'The grader shows too little of this test\'s expected output to check it here.'
+    : 'The grader only shows the start of this test\'s input, so it can\'t be run here.';
+  return `<div class="hint">${why} ${esc(lastSubmitText(r.lastSubmit))}</div>`;
+}
+
+const partialNote = (tc) => `<div class="hint">Checked only ${checkedPart(tc.output)}: the grader shows just the start of the expected output.</div>`;
 
 // One collapsible row per test, the first failing one open.
 function testRows(cases, results) {
@@ -60,10 +73,12 @@ function testRows(cases, results) {
     const cmp = comparedOutputs(tc, r.stdout);
     const extra = r.verdict === 'FAIL' ? diffHtml(cmp.expected, cmp.actual)
       : r.verdict === 'TLE' ? '<div class="diff"><b>Time limit exceeded.</b> Your program did not finish in time.</div>'
-        : r.verdict === 'SKIP' ? (r.skipped === 'output' ? SKIP_OUTPUT_NOTE : SKIP_NOTE) : '';
+        : r.verdict === 'SKIP' ? skipNote(r) : '';
+    // A skipped test shows the last submission's verdict instead of a time (an input that can't run has none).
+    const info = r.lastSubmit ? `last submit: ${esc(r.lastSubmit.label)}` : r.skipped === 'input' ? '' : `${r.ms} ms`;
     return `<details ${i === firstBad ? 'open' : ''}>
-      <summary><span class="v ${r.verdict}">${r.verdict}</span> Test ${i + 1} <span class="ms">${r.ms} ms</span></summary>
-      ${extra}${tc.partialOutput && r.verdict !== 'SKIP' ? PARTIAL_NOTE : ''}
+      <summary><span class="v ${r.verdict}">${r.verdict}</span> Test ${i + 1} <span class="ms">${info}</span></summary>
+      ${extra}${tc.partialOutput && (r.verdict === 'PASS' || r.verdict === 'FAIL') ? partialNote(tc) : ''}
       <div class="grid">
         <div><h4>Input</h4><pre>${esc(clip(tc.input))}</pre></div>
         <div><h4>Expected</h4><pre>${esc(clip(tc.output))}</pre></div>

@@ -1,4 +1,5 @@
 """Output comparison shared by the runner (verdict) and the results view (explaining a mismatch)."""
+import hashlib
 import re
 
 
@@ -44,6 +45,23 @@ def visible(s):
     return s.replace(" ", "·").replace("\t", "→").replace("\r", "␍")
 
 
+def _shown_part(output):
+    """The part of a cut-off expected output that can be checked: its complete lines, and the start of the last line,
+    which may be cut mid-way. The 2 KB cut can split a multi-byte character (Thai, ...), leaving one or more "�":
+    those are dropped, then one more character, in case the cut left anything else half-written."""
+    shown = norm_lines(output)
+    cut = (shown[-1] if shown else "").rstrip("�")[:-1]
+    return shown[:-1], cut
+
+
+def checked_part(output):
+    """What of a cut-off expected output is checked, in words: "lines 1-36 and the start of line 37"."""
+    complete, cut = _shown_part(output)
+    n = len(complete)
+    parts = ["lines 1-%d" % n if n > 1 else "line 1" if n else "", "the start of line %d" % (n + 1) if cut else ""]
+    return " and ".join(p for p in parts if p)
+
+
 def compared_outputs(tc, actual):
     """What to compare for a test. When only the first part of the expected output is known (partial_output),
     check the complete lines of that part against the same lines of the program's output, and the last visible
@@ -51,10 +69,7 @@ def compared_outputs(tc, actual):
     unchecked: nothing of the expected output is known, so any output would "match"."""
     if not tc.get("partial_output"):
         return {"expected": tc["output"], "actual": actual}
-    shown = norm_lines(tc["output"])
-    complete = shown[:-1]
-    # Drop the last character of the cut line too: the 2 KB cut can split a multi-byte character.
-    cut = (shown[-1] if shown else "")[:-1]
+    complete, cut = _shown_part(tc["output"])
     if not complete and not cut:
         return {"expected": "", "actual": "", "unchecked": True}
     mine = norm_lines(actual)
@@ -63,3 +78,11 @@ def compared_outputs(tc, actual):
     if cut and len(mine) > len(complete):
         got.append(mine[len(complete)][:len(cut)])
     return {"expected": "\n".join(expected), "actual": "\n".join(got)}
+
+
+def code_hash(source):
+    """A fingerprint of a program's code, to tell whether a submission was this same code. Line endings, trailing
+    spaces, blank lines at the end and a byte order mark don't count."""
+    if source.startswith("﻿"):
+        source = source[1:]
+    return hashlib.sha256(normalize(source).encode("utf-8")).hexdigest()

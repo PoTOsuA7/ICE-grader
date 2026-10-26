@@ -4,7 +4,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { GraderClient, decodeEntities } = require('./lib/client');
-const { runTests, runSingle, terminalCommand, dataSandbox, killTree } = require('./lib/runner');
+const { runTests, runSingle, terminalCommand, dataSandbox, killTree, lastSubmitOn } = require('./lib/runner');
+const { codeHash } = require('./lib/diff');
 const { programTerminal } = require('./lib/programTerminal');
 const { copyPngToClipboard } = require('./lib/clipboardImage');
 const { localResultsHtml, singleResultHtml, submissionHtml, explanationHtml, emptyHtml, mockReportHtml } = require('./lib/resultsHtml');
@@ -168,6 +169,33 @@ function activate(context) {
     fs.mkdirSync(problemDir(p.id), { recursive: true });
     fs.writeFileSync(file, JSON.stringify(cases));
     return cases;
+  }
+
+  // Your latest submission's verdicts { id, tests, code } (code: codeHash of what was submitted), for tests that
+  // can't be checked here. Saved when you submit from here; else read once from its page on the grader (only while
+  // signed in, at most once a minute) and saved, so later runs need no request and it works offline. null: not known.
+  const submissionFile = (p) => path.join(problemDir(p.id), 'submission.json');
+  const saveSubmission = (p, sub) => {
+    fs.mkdirSync(problemDir(p.id), { recursive: true });
+    fs.writeFileSync(submissionFile(p), JSON.stringify(sub));
+  };
+  const submissionLookups = new Map(); // submission id -> when it was last asked for
+  async function lastSubmission(p) {
+    let saved = null;
+    try { saved = JSON.parse(fs.readFileSync(submissionFile(p), 'utf8')); } catch { /* none saved yet */ }
+    const latest = p.lastSubmissionId;
+    if (saved && (!latest || Number(saved.id) >= Number(latest))) return saved;
+    if (!latest || !client || Date.now() - (submissionLookups.get(latest) || 0) < 60000) return null;
+    submissionLookups.set(latest, Date.now());
+    try {
+      const g = await client.fetchSubmission(latest, 10000);
+      if (!g.done) return null;
+      const sub = { id: latest, tests: g.tests, code: g.source === null ? null : codeHash(g.source) };
+      saveSubmission(p, sub);
+      return sub;
+    } catch {
+      return null; // offline or signed out: the test just says to submit
+    }
   }
 
   let statementPanel = null;
@@ -608,6 +636,15 @@ function activate(context) {
         if (e.details) { vscode.window.showErrorMessage(`Nattee: ${e.message}\n${e.details.slice(0, 400)}`); return; }
         throw e;
       }
+      // A test that can't be checked here shows the grader's verdict on it from your last submission, if known.
+      if (results.some((r) => r.verdict === 'SKIP')) {
+        const sub = await lastSubmission(p);
+        const code = codeHash(source);
+        results.forEach((r, i) => {
+          const seen = r.verdict === 'SKIP' && lastSubmitOn(sub, i, results.length, code);
+          if (seen) r.lastSubmit = seen;
+        });
+      }
       const t = tally(results);
       lastRun.set(linkKey(ed.document.fileName), { problemId: p.id, source, cases, results });
       updateFailureContext();
@@ -689,6 +726,7 @@ function activate(context) {
       show({ tests: [], status: 'queued', done: false });
       const grade = await c.waitForGrade(id, { onUpdate: show });
       show(grade);
+      if (grade.done) saveSubmission(p, { id: String(id), tests: grade.tests, code: codeHash(source) }); // for tests skipped here
       await refreshProblems();
       const msg = grade.timedOut ? `${p.code}: submitted #${id}, still grading - check the grader site.`
         : `${p.code}: ${grade.points}/${grade.max} points (submission #${id})`;
