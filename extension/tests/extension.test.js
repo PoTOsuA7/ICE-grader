@@ -503,3 +503,125 @@ test('Download All Statements and My Solutions says what failed; no folder chose
   await h.commands['nattee.exportAll']();
   assert.match(h.log.warnings.at(-1).m, /saved 2 of 3 problems \(2 with your latest submitted code\)\. Couldn't download 05_List_16\./);
 });
+
+// ------------------------------------------------------------- robustness
+const TWO_PROBLEMS = [
+  { id: '1', code: '05_List_15', name: 'a', hasTestcases: true },
+  { id: '2', code: '05_List_16', name: 'b', hasTestcases: true },
+];
+
+test('a save during a run reruns the saved file afterwards, not the file switched to (which is not saved)', async () => {
+  const h = loadExtension({ secrets: SIGNED_IN, problems: TWO_PROBLEMS, runMs: 150 });
+  await settle(h);
+  const a = h.makeDoc(path.join('C:', 'ws', '05_List_15.py'), 'a0');
+  const b = h.makeDoc(path.join('C:', 'ws', '05_List_16.py'), 'b0');
+  h.setEditor(a);
+  a.edit('a1');
+  await a.save(); // starts a run of a
+  await h.tick(40);
+  a.edit('a2');
+  await a.save(); // saved while a is running: one more run of a
+  h.setEditor(b);
+  b.edit('b1'); // unsaved work in the other file
+  await h.tick(500);
+  assert.deepStrictEqual(h.log.runs.map((r) => path.basename(r.file)), ['05_List_15.py', '05_List_15.py']);
+  assert.strictEqual(b.isDirty, true, 'the other file is left unsaved');
+});
+
+test('the time running out while "Hand in now?" is open marks the mock once, not twice', async () => {
+  const ws = tempFolder();
+  const file = path.join(ws.dir, 'mock-exams', 'x', '2025s1_Exam2_A1-1_Student.py');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, 'print(1)');
+  const now = Date.now();
+  let answer;
+  const h = loadExtension({ secrets: SIGNED_IN, problems: EXAM_PROBLEMS, folder: ws,
+    warnAnswer: new Promise((r) => { answer = r; }),
+    globalState: { 'nattee.mock': { started: now, deadline: now + 1200, minutes: 1, items: [{ id: '1498', code: '2025s1_Exam2_A1-1_Student', file }] } } });
+  await settle(h);
+  const asking = h.commands['nattee.handInMockExam'](); // the question stays open...
+  for (let i = 0; i < 60 && !h.log.infos.some((m) => /time is up/.test(m)); i++) await h.tick(50); // ...while the time runs out
+  assert.ok(h.log.infos.some((m) => /time is up/.test(m)), 'marked when the time ran out');
+  answer('Hand In');
+  await asking;
+  await settle(h);
+  assert.strictEqual(h.gstate.get('nattee.mockHistory').length, 1);
+  assert.strictEqual(h.log.runs.length, 1);
+  assert.deepStrictEqual(h.log.errors, []);
+});
+
+test('Run in Terminal and custom input still work when the grader\'s tests can\'t be downloaded', async () => {
+  const h = loadExtension({ secrets: SIGNED_IN, failIds: ['1'], input: () => '5',
+    pick: (items) => items.find((i) => i.kind === 'typed') || items[0] });
+  await settle(h);
+  h.setEditor(h.makeDoc(FILE));
+  await h.commands['nattee.runInTerminal']();
+  assert.strictEqual(h.log.terminals.length, 1, 'the terminal opens');
+  await h.commands['nattee.runOneTest']();
+  assert.deepStrictEqual(h.log.runs.map((r) => !!r.single), [true], 'your own input runs');
+  assert.match(h.log.picks.at(-1), /couldn't get the grader's tests \(HTTP 500\)/);
+  assert.deepStrictEqual(h.log.errors, []);
+});
+
+test('a sign-in that fails is not tried again at once; an expired session signs in again once', async () => {
+  const bad = loadExtension({ secrets: SIGNED_IN, loginError: 'Wrong username or password' });
+  await settle(bad);
+  assert.strictEqual(bad.log.logins.length, 1, 'one attempt at start-up');
+  await bad.commands['nattee.refresh']();
+  assert.strictEqual(bad.log.logins.length, 2, 'one attempt per command');
+  assert.match(bad.log.errors.at(-1), /Wrong username or password/);
+
+  const h = loadExtension({ secrets: SIGNED_IN });
+  await settle(h);
+  assert.strictEqual(h.log.logins.length, 1);
+  h.log.clients.forEach((c) => { c.dead = true; }); // the session expires
+  await h.commands['nattee.refresh']();
+  assert.strictEqual(h.log.logins.length, 2, 'signed in again once');
+  assert.deepStrictEqual(h.log.errors, []);
+
+  const never = loadExtension({ secrets: SIGNED_IN, deadSessions: true });
+  await settle(never);
+  const before = never.log.logins.length;
+  await never.commands['nattee.refresh']();
+  assert.strictEqual(never.log.logins.length - before, 1, 'no loop when the new session fails too');
+  assert.match(never.log.errors.at(-1), /Session expired/);
+});
+
+test('switching quickly between two problems\' files ends with the statement of the file you are in', async () => {
+  const h = loadExtension({ secrets: SIGNED_IN, problems: TWO_PROBLEMS, statementMs: (id) => (id === '1' ? 200 : 10) });
+  await settle(h);
+  h.setEditor(h.makeDoc(path.join('C:', 'ws', '05_List_15.py'))); // slow to download
+  await h.tick(20);
+  h.setEditor(h.makeDoc(path.join('C:', 'ws', '05_List_16.py')));
+  await h.tick(400);
+  assert.strictEqual(h.log.panels.length, 1);
+  assert.strictEqual(h.log.panels[0].title, '05_List_16');
+});
+
+test('after Sign Out the problem list stays gone when VS Code starts again', async () => {
+  const h = loadExtension({ secrets: SIGNED_IN });
+  await settle(h);
+  assert.strictEqual(h.log.tree.getChildren().length, 1);
+  await h.commands['nattee.logout']();
+  assert.strictEqual(h.log.tree.getChildren().length, 0);
+  const again = loadExtension({ storage: h.storage });
+  await settle(again);
+  assert.deepStrictEqual(again.log.tree.getChildren(), [], 'the sign-in button shows, not the old list and scores');
+  again.setEditor(again.makeDoc(FILE));
+  assert.strictEqual(again.context['nattee.activeFileLinked'], false);
+});
+
+test('a problem list or tests that can\'t be saved to the cache still load and run', async () => {
+  const h = loadExtension({ secrets: SIGNED_IN });
+  await settle(h);
+  const host = path.join(h.storage, '2190101.nattee.net');
+  fs.rmSync(path.join(host, 'problems.json'), { force: true });
+  fs.mkdirSync(path.join(host, 'problems.json')); // something in the way: writing it fails
+  fs.mkdirSync(path.join(host, '1', 'tests.v2.json'), { recursive: true });
+  await h.commands['nattee.refresh']();
+  assert.deepStrictEqual(h.log.errors, []);
+  h.setEditor(h.makeDoc(FILE));
+  await h.commands['nattee.runTests']();
+  assert.deepStrictEqual(h.log.errors, []);
+  assert.strictEqual(h.log.runs.length, 1);
+});

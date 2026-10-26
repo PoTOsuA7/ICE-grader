@@ -64,3 +64,9 @@ test('a time limit of 0, negative or not a number falls back to the default inst
     assert.deepStrictEqual(await verdicts(f, [{ input: '1\n', output: '2\n' }], { ...cfg, timeoutMs }), ['PASS'], String(timeoutMs));
   }
 });
+
+test('a huge time limit is not an instant TLE (timers stop at about 24.8 days)', async (t) => {
+  if (!(await havePython(t))) return;
+  const f = write('quick_huge.py', 'print(int(input()) + 1)');
+  assert.deepStrictEqual(await verdicts(f, [{ input: '1\n', output: '2\n' }], { ...cfg, timeoutMs: 3e9 }), ['PASS']);
+});

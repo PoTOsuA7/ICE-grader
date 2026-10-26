@@ -158,7 +158,15 @@ class GraderClient {
       const sameSite = hop.origin === home.origin && !(home.protocol === 'https:' && hop.protocol !== 'https:');
       const headers = { ...(opts.headers || {}) };
       if (sameSite && this.cookies.size) headers.Cookie = [...this.cookies].map(([k, v]) => `${k}=${v}`).join('; ');
-      const res = await fetch(url, { ...opts, headers, redirect: 'manual', signal: AbortSignal.timeout(30000) });
+      let res;
+      try {
+        res = await fetch(url, { ...opts, headers, redirect: 'manual', signal: AbortSignal.timeout(30000) });
+      } catch (e) {
+        // fetch only says "fetch failed" or "aborted": say what it means
+        if (e.name === 'TimeoutError') throw new Error(`${hop.host} did not answer within 30 s - the site may be down or very slow. Try again later.`);
+        if (!e.cause) throw e;
+        throw new Error(`Can't reach ${hop.host} (${e.cause.code || e.cause.message}) - check your internet connection, or the site may be down.`);
+      }
       if (sameSite) this._absorbCookies(res);
       const loc = res.headers.get('location');
       if (res.status >= 300 && res.status < 400 && loc) {
@@ -251,6 +259,7 @@ GraderClient.prototype.submit = async function submit(problemId, source, ext) {
   const previousId = before && before.lastSubmissionId ? Number(before.lastSubmissionId) : 0;
   const form = parseSubmitForm(await this._getText(`submissions/direct_edit_problem/${problemId}`));
   if (!form.token || !form.problemId) throw new Error('Could not read the submit form (session expired or the page layout changed)');
+  if (!form.languages.length) throw new Error("Could not read the languages on the submit form (the grader's page has changed) - submit on the grader site.");
   const pattern = LANGUAGE_PATTERNS[ext.toLowerCase()];
   const lang = pattern && form.languages.find((l) => pattern.test(l.name));
   if (!lang) {

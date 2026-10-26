@@ -142,6 +142,33 @@ test('a .c file is matched to a language listed as "ANSI C"', async () => {
   } finally { srv.restore(); }
 });
 
+test('a submit form whose languages can\'t be read says the page changed, not that the language is refused', async () => {
+  let posted = false;
+  const srv = fakeServer({
+    'GET /main/list': () => [200, listPage('5')],
+    'GET /submissions/direct_edit_problem/5': () => [200, html(`<form action="/main/submit"><input name="authenticity_token" value="tok2" />
+<input name="submission[problem_id]" value="5" /><div class="language-picker">Python</div></form>`)],
+    'POST /main/submit': () => { posted = true; return [302, '', { location: '/submissions/9' }]; },
+  });
+  try {
+    await assert.rejects(() => client().submit('5', 'print(1)', '.py'), /Could not read the languages on the submit form/);
+    assert.strictEqual(posted, false);
+  } finally { srv.restore(); }
+});
+
+test('no connection, or no answer from the grader, is said plainly (not "fetch failed")', async () => {
+  const srv = fakeServer({
+    'GET /main/list': () => {
+      throw new TypeError('fetch failed', { cause: Object.assign(new Error('getaddrinfo ENOTFOUND grader.test'), { code: 'ENOTFOUND' }) });
+    },
+    'GET /testcases/show_problem/1': () => { throw new DOMException('The operation was aborted due to timeout', 'TimeoutError'); },
+  });
+  try {
+    await assert.rejects(() => client().listProblems(), /Can't reach grader\.test \(ENOTFOUND\) - check your internet connection/);
+    await assert.rejects(() => client().fetchTestcases(1), /grader\.test did not answer within 30 s/);
+  } finally { srv.restore(); }
+});
+
 // The submission page as the grader shows it (checked against a real one, 2026-10-17).
 const row = (label, value) => `<div class='row mb-2'>\n<div class='col-4 text-end text-secondary'>\n${label}\n</div>\n<div class='col'>\n${value}\n</div>\n</div>`;
 

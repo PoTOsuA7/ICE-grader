@@ -53,3 +53,15 @@ test('C is linked with -lm (after the source), C++ is compiled as C++17', async 
   assert.ok(c.indexOf('-lm') > c.indexOf('/x/a.c'), c.join(' '));
   assert.ok(cpp.includes('-std=c++17') && !cpp.includes('-lm'), cpp.join(' '));
 });
+
+test('a Python or compiler path pasted with quotes around it (Windows "Copy as path") is used, not skipped', async () => {
+  const py = 'C:\\Program Files\\Python 3\\python.exe';
+  const { calls, runner } = fakeExecFile({ [py]: () => [null, 'Python 3.12.1', ''] });
+  assert.strictEqual(await runner.findPython(` "${py}" `, []), py);
+  assert.deepStrictEqual(calls.map((c) => c[0]), [py]);
+  const gpp = 'C:\\My Tools\\g++.exe';
+  const compiled = fakeExecFile({ [gpp]: () => [null, '', ''] });
+  const prep = await compiled.runner.prepare('/x/a.cpp', { cppCompiler: `"${gpp}"` });
+  prep.cleanup();
+  assert.strictEqual(compiled.calls[0][0], gpp);
+});

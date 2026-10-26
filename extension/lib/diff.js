@@ -20,6 +20,7 @@ function firstDifference(expected, actual) {
     if (a[i] === undefined) return { line: i + 1, kind: 'missing', expected: e[i] };
     let index = 0;
     while (index < e[i].length && index < a[i].length && e[i][index] === a[i][index]) index++;
+    if (/[\uD800-\uDBFF]/.test(e[i][index - 1])) index--; // the start of an emoji (two UTF-16 units), not its middle
     const collapse = (s) => s.replace(/\s+/g, ' ').trim();
     return {
       line: i + 1, kind: 'differs', expected: e[i], actual: a[i], index,

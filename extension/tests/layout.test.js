@@ -45,3 +45,10 @@ test('a problem code made of dots can never point outside the workspace', () => 
     }
   }
 });
+
+test('names stay usable on Windows: no trailing dot, and not too long for a file name', () => {
+  assert.strictEqual(safeName('Lab 1.'), 'Lab_1');
+  assert.strictEqual(safeName('...x...'), '...x');
+  const file = solutionPath('ws', `05_List_${'y'.repeat(300)}`, '.py');
+  assert.ok(path.basename(file).length <= 104 && path.basename(path.dirname(file)).length <= 100, file);
+});

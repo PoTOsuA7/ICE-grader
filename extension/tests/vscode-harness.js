@@ -13,7 +13,7 @@ function loadExtension(opts = {}) {
   const log = {
     errors: [], warnings: [], infos: [], executed: [], logins: [], runs: [], opened: [], submitted: [], fetchedTests: [],
     statusItems: [], terminals: [], pickItems: [], picks: [], findFiles: [], cleanups: 0, progress: [], fetchedStatements: [],
-    panels: [], posted: [], clipboard: [], clipboardPictures: [], saveDialogs: [], openDialogs: [], fetchedSources: [],
+    panels: [], posted: [], clipboard: [], clipboardPictures: [], saveDialogs: [], openDialogs: [], fetchedSources: [], clients: [],
   };
   // the first status bar item is the Run button; later ones (the mock exam timer) are in statusItems
   Object.defineProperty(log, 'statusItem', { get: () => log.statusItems[0] });
@@ -152,16 +152,22 @@ function loadExtension(opts = {}) {
     },
   });
   const problems = opts.problems || [{ id: '1', code: '05_List_15', name: '05_List_15_Foo', hasTestcases: true, status: 'untried', score: 0 }];
+  // A session that has expired (client.dead = true) fails every request, like the real grader sending the login
+  // page. opts.loginError: signing in fails; opts.deadSessions: every new session is already dead.
   class FakeClient {
-    constructor(root) { this.root = root; }
-    async login(uid, pw) { log.logins.push({ root: this.root, uid, pw }); }
-    async listProblems() { if (opts.listError) throw new Error(opts.listError); return problems; }
+    constructor(root) { this.root = root; this.dead = !!opts.deadSessions; log.clients.push(this); }
+    alive() { if (this.dead) throw new Error('Session expired'); }
+    async login(uid, pw) { log.logins.push({ root: this.root, uid, pw }); if (opts.loginError) throw new Error(opts.loginError); }
+    async listProblems() { this.alive(); if (opts.listError) throw new Error(opts.listError); return problems; }
     async fetchStatement(id) {
+      this.alive();
       log.fetchedStatements.push(id);
+      if (opts.statementMs) await new Promise((r) => setTimeout(r, opts.statementMs(id)));
       if ((opts.failStatements || []).includes(id)) throw new Error('HTTP 500');
       return opts.statement || { data: Buffer.from('%PDF'), ext: '.pdf' };
     }
     async fetchTestcases(id) {
+      this.alive();
       log.fetchedTests.push(id);
       if ((opts.failIds || []).includes(id)) throw new Error('HTTP 500');
       return opts.cases || [{ input: '1\n', output: '1\n' }, { input: '2\n', output: '2\n' }];
@@ -185,7 +191,8 @@ function loadExtension(opts = {}) {
   const ext = require(extPath);
   Module._resolveFilename = realResolve;
 
-  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'nattee-harness-'));
+  // opts.storage: the storage folder of an earlier load, like VS Code starting again
+  const storage = opts.storage || fs.mkdtempSync(path.join(os.tmpdir(), 'nattee-harness-'));
   ext.activate({
     extensionPath: EXT, subscriptions: [], globalStorageUri: { fsPath: storage },
     secrets: { get: async (k) => secrets.get(k), store: async (k, v) => { secrets.set(k, v); }, delete: async (k) => { secrets.delete(k); } },

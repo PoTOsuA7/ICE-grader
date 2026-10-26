@@ -12,7 +12,7 @@ Module._load = function (req, ...a) {
 const { statementHtml } = require('../lib/statement');
 Module._load = realLoad;
 
-function startViewer({ msPerArea, numPages = 3 }) {
+function startViewer({ msPerArea, numPages = 3, pageHeight = 800 }) {
   const html = statementHtml({ asWebviewUri: (u) => 'vs://' + u.p, cspSource: 'vs:' }, 'x.pdf', 'lib');
   const src = /<script>([\s\S]*?)<\/script>/.exec(html)[1];
   const listeners = {};
@@ -33,7 +33,7 @@ function startViewer({ msPerArea, numPages = 3 }) {
   };
   // Bigger zoom = more pixels = slower render, like the real thing.
   const page = {
-    getViewport: ({ scale }) => ({ width: 600 * scale, height: 800 * scale }),
+    getViewport: ({ scale }) => ({ width: 600 * scale, height: pageHeight * scale }),
     render: ({ viewport }) => ({ promise: new Promise((r) => setTimeout(r, viewport.width * viewport.height * msPerArea)) }),
   };
   page.getTextContent = async () => ({ items: [{ str: 'Line one', hasEOL: true }, { str: 'Line ', hasEOL: false }, { str: 'two', hasEOL: false }] });
@@ -72,8 +72,8 @@ test('asked for the text (the Copy button), the viewer sends the PDF text page b
   assert.deepStrictEqual(v.posted, [{ type: 'text', id: 7, pages: [page, page, page] }]);
 });
 
-const picture = async (numPages) => {
-  const v = startViewer({ msPerArea: 0, numPages });
+const picture = async (numPages, pageHeight) => {
+  const v = startViewer({ msPerArea: 0, numPages, pageHeight });
   await wait(50);
   v.listeners['window:message']({ data: { type: 'getImage', id: 8 } });
   for (let t = 0; t < 100 && !v.posted.length; t++) await wait(20);
@@ -96,4 +96,10 @@ test('a statement with many pages becomes a grid, smaller so it is at most 4000 
   assert.strictEqual(drawn.length, 13);
   assert.deepStrictEqual(drawn[5], [750, 1000, 750, 1000]);
   assert.deepStrictEqual(drawn[12], [750, 1000, 0, 3000]);
+});
+
+test('one or two long pages are not put beside an empty column', async () => {
+  // pages 600 wide at scale 2: one of 600 x 1600, then two of 600 x 2000 side by side (not three columns)
+  assert.deepStrictEqual(await picture(1, 1600), { size: '1200x3200', drawn: [[1200, 3200, 0, 0]] });
+  assert.deepStrictEqual(await picture(2, 2000), { size: '2400x4000', drawn: [[1200, 4000, 0, 0], [1200, 4000, 1200, 0]] });
 });

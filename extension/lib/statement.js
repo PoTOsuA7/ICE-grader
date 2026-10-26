@@ -184,7 +184,8 @@ function statementHtml(webview, statementPath, libDir) {
       const sizes = pages.map((p) => p.getViewport({ scale: 1 }));
       const cellW = Math.max(...sizes.map((v) => v.width));
       const cellH = Math.max(...sizes.map((v) => v.height));
-      const cols = Math.max(1, Math.round(Math.sqrt(pages.length * cellH / cellW)));
+      // never more columns than pages: long pages would otherwise get an empty column beside them
+      const cols = Math.min(pages.length, Math.max(1, Math.round(Math.sqrt(pages.length * cellH / cellW))));
       const rows = Math.ceil(pages.length / cols);
       const s = Math.min(2, 4000 / Math.max(cols * cellW, rows * cellH));
       const out = document.createElement('canvas');

@@ -46,3 +46,16 @@ test('explanation view shows the stale-file note when given one', () => {
   const html = explanationHtml('t', 'Note: edited since this ran.', 'text');
   assert.ok(html.includes('Note: edited since this ran.'));
 });
+
+test('a test the grader calls "Incorrect" gets a red tile, not a green one', () => {
+  const tests = [{ n: 1, total: 2, label: 'Correct', letter: 'P' }, { n: 2, total: 2, label: 'Incorrect', letter: '-' }];
+  const html = submissionHtml({ code: 'X' }, 5, { tests, done: true, points: 50, max: 100 });
+  assert.match(html, /tile ok" title="Test 1: Correct"/);
+  assert.match(html, /tile bad" title="Test 2: Incorrect"/);
+});
+
+test('a difference inside an emoji marks the whole character, not half of it', () => {
+  const html = diffHtml('A😀', 'A😁');
+  assert.ok(html.includes('column 2'), html);
+  assert.ok(html.includes('A<mark>😀</mark>') && html.includes('A<mark>😁</mark>'), html);
+});

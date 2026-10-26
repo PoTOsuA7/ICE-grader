@@ -41,10 +41,13 @@ function thonnyPythons() {
   return places.filter((p) => p && fs.existsSync(p));
 }
 
+// A program path from the settings, as typed or pasted: Windows' "Copy as path" puts quotes around it.
+const unquote = (s) => (typeof s === 'string' ? s.trim().replace(/^"(.*)"$/, '$1') : s);
+
 // The Windows "python" command is often a Microsoft Store stub; fall back to the "py" launcher, then Thonny's Python.
 // Only Python 3 counts: the grader runs Python 3, and under Python 2 input() and print behave differently.
 async function findPython(preferred, extras = thonnyPythons()) {
-  const tried = [...new Set([preferred, 'py', 'python3', ...extras].filter(Boolean))];
+  const tried = [...new Set([unquote(preferred), 'py', 'python3', ...extras].filter(Boolean))];
   for (const c of tried) {
     const r = await execP(c, ['--version'], { timeout: 10000 });
     if (!r.err && /Python 3\./.test(r.stdout + r.stderr)) return c;
@@ -57,7 +60,7 @@ async function prepare(file, cfg) {
   const ext = path.extname(file).toLowerCase();
   if (ext === '.py') return { cmd: await findPython(cfg.pythonPath), args: [file], cleanup() {} };
   if (ext === '.cpp' || ext === '.c') {
-    const compiler = (ext === '.c' ? cfg.cCompiler : cfg.cppCompiler) || (ext === '.c' ? 'gcc' : 'g++');
+    const compiler = unquote(ext === '.c' ? cfg.cCompiler : cfg.cppCompiler) || (ext === '.c' ? 'gcc' : 'g++');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nattee-'));
     const exe = path.join(dir, process.platform === 'win32' ? 'sol.exe' : 'sol');
     // C needs -lm on Linux for sqrt/pow/log (the grader links it too); g++ links it by itself.
@@ -117,10 +120,12 @@ function mapDataPaths(input, files) {
 }
 
 const DEFAULT_TIMEOUT_MS = 3000;
+const MAX_TIMEOUT_MS = 2 ** 31 - 1; // a longer timer fires at once (Node sets it to 1 ms)
 
 function runOne(cmd, args, input, timeoutMs, cwd) {
   // 0, negative or not a number (e.g. an emptied setting) would time out at once: use the default instead.
   if (!(timeoutMs > 0)) timeoutMs = DEFAULT_TIMEOUT_MS;
+  timeoutMs = Math.min(timeoutMs, MAX_TIMEOUT_MS);
   return new Promise((resolve) => {
     const start = Date.now();
     let out = '', err = '', timedOut = false, done = false, exitCode;

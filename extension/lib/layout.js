@@ -3,8 +3,9 @@
 const path = require('path');
 
 // A file or folder name made from a problem code. Never "." or ".." (or empty), which would point outside.
+// No trailing dot (Windows drops it, so other programs can't find the folder) and at most 100 characters.
 const safeName = (s) => {
-  const name = s.replace(/[^\w\-.]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+  const name = s.replace(/[^\w\-.]+/g, '_').replace(/_+/g, '_').slice(0, 100).replace(/^_|[_.]+$/g, '');
   return !name || /^\.+$/.test(name) ? 'problem' : name;
 };
 

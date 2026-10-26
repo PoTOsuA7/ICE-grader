@@ -54,27 +54,37 @@ function activate(context) {
     client = c;
   }
 
-  async function ensureClient() {
-    if (client) return client;
-    const uid = await context.secrets.get('nattee.uid');
-    const pw = await context.secrets.get('nattee.password');
-    if (!uid || !pw) throw new Error('Not signed in. Run "Nattee: Sign In".');
-    // Sign-ins from before the origin was saved were for the default grader.
-    const savedFor = (await context.secrets.get('nattee.origin')) || DEFAULT_ORIGIN;
-    if (graderOrigin() !== savedFor) {
-      throw new Error(`Not signed in to ${graderOrigin()} (your saved sign-in is for ${savedFor}). Run "Nattee: Sign In".`);
+  // Signs in with the saved password, once for all the requests waiting for it.
+  let signingIn = null;
+  function ensureClient() {
+    if (client) return Promise.resolve(client);
+    if (!signingIn) {
+      signingIn = (async () => {
+        const uid = await context.secrets.get('nattee.uid');
+        const pw = await context.secrets.get('nattee.password');
+        if (!uid || !pw) throw new Error('Not signed in. Run "Nattee: Sign In".');
+        // Sign-ins from before the origin was saved were for the default grader.
+        const savedFor = (await context.secrets.get('nattee.origin')) || DEFAULT_ORIGIN;
+        if (graderOrigin() !== savedFor) {
+          throw new Error(`Not signed in to ${graderOrigin()} (your saved sign-in is for ${savedFor}). Run "Nattee: Sign In".`);
+        }
+        await connect(uid, pw);
+        return client;
+      })().finally(() => { signingIn = null; });
     }
-    await connect(uid, pw);
-    return client;
+    return signingIn;
   }
 
-  // Runs fn(client); if the session has expired, signs in again once and retries.
+  // Runs fn(client); if the session was signed in earlier (it may have expired), signs in again once and retries.
+  // A sign-in that fails (wrong password, offline, ...) is not tried again: it would only fail again.
   async function withClient(fn) {
+    const fresh = !client;
+    const c = await ensureClient();
     try {
-      return await fn(await ensureClient());
+      return await fn(c);
     } catch (e) {
-      if (/Not signed in/.test(e.message)) throw e;
-      client = null;
+      if (fresh) throw e;
+      if (client === c) client = null; // not one another request has just signed in
       return await fn(await ensureClient());
     }
   }
@@ -95,11 +105,18 @@ function activate(context) {
     try { problems = JSON.parse(fs.readFileSync(cachedProblemsFile(), 'utf8')); } catch { problems = []; }
   }
 
+  // The cache only saves downloading again: if it can't be written (disk full, no access, ...), carry on without it.
+  function cache(file, text) {
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, text);
+    } catch { /* works without it */ }
+  }
+
   // Every problem is listed, exam practice too, also those without test cases (statement + submit only).
   async function refreshProblems() {
     problems = await withClient((c) => c.listProblems());
-    fs.mkdirSync(cacheRoot(), { recursive: true });
-    fs.writeFileSync(cachedProblemsFile(), JSON.stringify(problems));
+    cache(cachedProblemsFile(), JSON.stringify(problems));
     tree.fire();
     updateEditorState(); // the open file may only now match a problem
   }
@@ -165,19 +182,21 @@ function activate(context) {
     const file = path.join(problemDir(p.id), 'tests.v2.json');
     try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* not cached yet */ }
     const cases = await withClient((c) => c.fetchTestcases(p.id));
-    fs.mkdirSync(problemDir(p.id), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(cases));
+    cache(file, JSON.stringify(cases));
     return cases;
   }
 
   let statementPanel = null;
   let shownProblem = null;
+  let statementAsks = 0; // only the newest statement asked for is shown, even if an older one downloads last
 
   // preserveFocus true = opened automatically (switching to a linked file); false = the user asked for it.
   async function showStatement(p, preserveFocus = true) {
+    const ask = ++statementAsks;
     if (shownProblem === p.id && statementPanel) { statementPanel.reveal(vscode.ViewColumn.Beside, preserveFocus); return; }
     if (shownProblem === p.id && preserveFocus) return; // a non-PDF statement already opened beside the code
     const file = await getStatement(p);
+    if (ask !== statementAsks) return;
     if (path.extname(file) !== '.pdf') {
       // Not a PDF (HTML, text, ...): open it beside the code like the PDF viewer, without taking focus.
       await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(file), { viewColumn: vscode.ViewColumn.Beside, preserveFocus, preview: true });
@@ -437,6 +456,7 @@ function activate(context) {
       return;
     }
     await showStatement(p, true);
+    if (!statementPanel || shownProblem !== p.id) throw new Error('another statement was opened meanwhile - press Copy again.');
     const { pages } = await askViewer('getText');
     const text = tidy(pages.join('\n\n'));
     if (!pages.some(drawnPage)) {
@@ -480,6 +500,7 @@ function activate(context) {
     signedInHere().then(async (ok) => {
       await setLoggedIn(ok);
       if (ok) await refreshProblems();
+      else { problems = []; tree.fire(); updateEditorState(); } // signed out: the sign-in button, not a saved list
     }).catch(fail);
   }));
 
@@ -562,54 +583,59 @@ function activate(context) {
 
   // One test run at a time. A save while tests run queues one more automatic run afterwards, so the newest
   // code always gets tested. Saves the extension makes itself (before a run or submit) don't start a run.
-  let running = false, rerunQueued = false, ownSave = false;
+  // The queued run is for the file that was saved, even if another file is active by then.
+  let running = false, rerunQueued = null, ownSave = false;
   async function saveQuietly(doc) {
     ownSave = true;
     try { await doc.save(); } finally { ownSave = false; }
   }
 
-  async function runActive(auto) {
+  // doc: the saved document (automatic runs); otherwise the active editor's.
+  async function runActive(auto, doc) {
     if (running) {
-      if (auto) rerunQueued = true; else vscode.window.showInformationMessage('Nattee: tests are already running.');
+      if (auto) rerunQueued = doc; else vscode.window.showInformationMessage('Nattee: tests are already running.');
       return;
     }
     running = true;
     try {
-      await runActiveNow(auto);
+      await runActiveNow(auto, doc);
     } finally {
       running = false;
-      if (rerunQueued) { rerunQueued = false; runActive(true).catch(fail); }
+      const next = rerunQueued;
+      rerunQueued = null;
+      if (next && !next.isClosed) runActive(true, next).catch(fail);
     }
   }
 
-  async function runActiveNow(auto) {
+  async function runActiveNow(auto, doc) {
     const ed = vscode.window.activeTextEditor;
-    if (!ed || ed.document.uri.scheme !== 'file') throw new Error('Open a solution file first.');
-    let p = linkedProblem(ed.document.fileName);
+    if (!doc) doc = ed && ed.document;
+    if (!doc || doc.uri.scheme !== 'file') throw new Error('Open a solution file first.');
+    let p = linkedProblem(doc.fileName);
     if (!p) {
       if (auto) return;
       p = await pickProblem();
       if (!p) return;
-      await setLink(ed.document.fileName, p.id);
+      await setLink(doc.fileName, p.id);
       updateEditorState();
     }
     if (!hasTests(p)) {
       if (!auto) vscode.window.showInformationMessage(`${p.code} has no test cases on the grader. Use Run One Test with your own input, or submit to check it.`);
       return;
     }
-    await saveQuietly(ed.document);
-    const source = ed.document.getText(); // the code being tested, before any edits made while it runs
+    await saveQuietly(doc);
+    const source = doc.getText(); // the code being tested, before any edits made while it runs
     await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Running ${p.code}...` }, async () => {
       const cases = await getTests(p);
       let results;
       try {
-        results = await runTests(ed.document.fileName, cases, runCfg());
+        results = await runTests(doc.fileName, cases, runCfg());
       } catch (e) {
         if (e.details) { vscode.window.showErrorMessage(`Nattee: ${e.message}\n${e.details.slice(0, 400)}`); return; }
         throw e;
       }
       const t = tally(results);
-      lastRun.set(linkKey(ed.document.fileName), { problemId: p.id, source, cases, results });
+      lastRun.set(linkKey(doc.fileName), { problemId: p.id, source, cases, results });
       updateFailureContext();
       showView(localResultsHtml(p, cases, results), `${p.code}: ${t.passed}/${t.ran}`);
       (t.passed === t.ran ? vscode.window.showInformationMessage : vscode.window.showWarningMessage)(
@@ -622,7 +648,7 @@ function activate(context) {
   context.subscriptions.push(vscode.workspace.onDidSaveTextDocument((doc) => {
     const ed = vscode.window.activeTextEditor;
     if (ownSave || inMock() || !cfg().get('runOnSave') || !ed || ed.document !== doc || !linkedProblem(doc.fileName)) return;
-    runActive(true).catch(fail);
+    runActive(true, doc).catch(fail);
   }));
 
   // Run one chosen test, or your own input, and show the output.
@@ -630,7 +656,9 @@ function activate(context) {
     const ed = vscode.window.activeTextEditor;
     if (!ed || ed.document.uri.scheme !== 'file') throw new Error('Open a solution file first.');
     const p = linkedProblem(ed.document.fileName);
-    const allCases = p ? await getTests(p) : [];
+    // Your own input needs no grader: offline or signed out it still runs, without the grader's tests.
+    let missing = '';
+    const allCases = p ? await getTests(p).catch((e) => { missing = e.message.replace(/\.$/, ''); return []; }) : [];
     const cases = inMock() ? [] : allCases; // the grader's tests are hidden during a mock exam
     const items = [
       ...cases.map((c, i) => ({ label: `Test ${i + 1}`, description: c.input.split('\n')[0].slice(0, 60), kind: 'test', i })),
@@ -638,7 +666,8 @@ function activate(context) {
       { label: '$(edit) Custom input in one line', description: 'write \\n for a new line', kind: 'typed' },
       { label: '$(clippy) Custom input from the clipboard', kind: 'clipboard' },
     ];
-    const pick = await vscode.window.showQuickPick(items, { placeHolder: 'Which input to run?' });
+    const pick = await vscode.window.showQuickPick(items,
+      { placeHolder: `Which input to run?${missing ? ` (couldn't get the grader's tests (${missing}), so only your own input)` : ''}` });
     if (!pick) return;
     if (pick.kind === 'terminal') return vscode.commands.executeCommand('nattee.runInTerminal');
     let input, expected, title;
@@ -773,7 +802,9 @@ function activate(context) {
     await saveQuietly(ed.document);
     const p = linkedProblem(file);
     // The problem's data files (e.g. /data/data.txt) come with the test cases; the real exam has them too.
-    const files = p && hasTests(p) ? ((await getTests(p))[0] || {}).files : undefined;
+    // Without them (offline or signed out) it still runs, and says so.
+    let missing = '';
+    const files = p && hasTests(p) ? ((await getTests(p).catch((e) => { missing = e.message.replace(/\.$/, ''); return []; }))[0] || {}).files : undefined;
     let prep;
     try {
       prep = await terminalCommand(file, runCfg());
@@ -792,7 +823,8 @@ function activate(context) {
         cmd: prep.cmd, args: prep.args, cwd: box ? box.dir : path.dirname(file), kill: killTree,
         env: { PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1', PYTHONUNBUFFERED: '1' },
         intro: `Running ${path.basename(file)}: type the input and press Enter. Ctrl+C stops it.`
-          + (dataName ? `\nThis problem's data files are here: where it says /data/${dataName}, type data/${dataName}.` : ''),
+          + (dataName ? `\nThis problem's data files are here: where it says /data/${dataName}, type data/${dataName}.` : '')
+          + (missing ? `\n(Couldn't get this problem's data files, if it has any: ${missing}.)` : ''),
         onExit: () => { prep.cleanup(); if (box) box.cleanup(); },
       }),
     });
@@ -892,6 +924,9 @@ function activate(context) {
       const choice = await vscode.window.showWarningMessage('Hand in your mock exam now?',
         { modal: true, detail: `${clock(m.deadline - Date.now())} left. Your answers will be marked with the grader's tests.` }, 'Hand In');
       if (choice !== 'Hand In') return;
+      // the time may have run out (and this mock been marked) while the question was open
+      const still = mock();
+      if (!still || still.started !== m.started) return;
     }
     if (handingIn) return;
     handingIn = true;
@@ -947,6 +982,8 @@ function activate(context) {
     if (ok) {
       refreshProblems().catch((e) => vscode.window.showWarningMessage(
         `Nattee: couldn't load the problem list (${e.message}). Showing the last saved list - press Refresh to try again.`));
+    } else {
+      problems = []; // signed out (Sign Out empties the list): the sign-in button, not the last list and its scores
     }
     updateEditorState();
     tree.fire();

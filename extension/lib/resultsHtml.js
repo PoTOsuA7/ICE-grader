@@ -40,8 +40,9 @@ function diffHtml(expected, actual) {
   const mark = (s) => {
     const v = visible(s);
     const head = esc(v.slice(0, d.index));
-    const ch = v[d.index];
-    return ch === undefined ? `${head}<mark>⏎</mark>` : `${head}<mark>${esc(ch)}</mark>${esc(v.slice(d.index + 1))}`;
+    const cp = v.codePointAt(d.index);
+    const ch = cp === undefined ? undefined : String.fromCodePoint(cp); // a whole emoji, not half of it
+    return ch === undefined ? `${head}<mark>⏎</mark>` : `${head}<mark>${esc(ch)}</mark>${esc(v.slice(d.index + ch.length))}`;
   };
   return `<div class="diff"><b>First difference: line ${d.line}, column ${d.index + 1}</b>
     <div>Expected <code>${mark(d.expected)}</code></div><div>Yours <code>${mark(d.actual)}</code></div>
@@ -99,7 +100,8 @@ function singleResultHtml(title, input, expected, r) {
 
 // grader result from parseSubmissionPage()
 function submissionHtml(problem, id, g) {
-  const tiles = g.tests.map((t) => `<span class="tile ${/correct/i.test(t.label) ? 'ok' : 'bad'}" title="Test ${t.n}: ${esc(t.label)}">${esc(t.letter)}</span>`).join('');
+  // "Correct" is a pass; "Incorrect" is not
+  const tiles = g.tests.map((t) => `<span class="tile ${/(?<![a-z])correct/i.test(t.label) ? 'ok' : 'bad'}" title="Test ${t.n}: ${esc(t.label)}">${esc(t.letter)}</span>`).join('');
   const state = g.timedOut ? 'Still grading after 90 s - check the grader site'
     : g.done ? `${g.points ?? '?'} / ${g.max ?? '?'} points` : `Grading... (${esc(g.status || 'queued')})`;
   return page(`<div class="sum"><b>${esc(problem.code)}</b> submitted as #${esc(id)}</div>
