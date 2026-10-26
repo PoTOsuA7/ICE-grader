@@ -14,6 +14,7 @@ function loadExtension(opts = {}) {
     errors: [], warnings: [], infos: [], executed: [], logins: [], runs: [], opened: [], submitted: [], fetchedTests: [],
     statusItems: [], terminals: [], pickItems: [], picks: [], findFiles: [], cleanups: 0, progress: [], fetchedStatements: [],
     panels: [], posted: [], clipboard: [], clipboardPictures: [], saveDialogs: [], openDialogs: [], fetchedSources: [], clients: [],
+    fetchedSubmissions: [],
   };
   // the first status bar item is the Run button; later ones (the mock exam timer) are in statusItems
   Object.defineProperty(log, 'statusItem', { get: () => log.statusItems[0] });
@@ -176,8 +177,15 @@ function loadExtension(opts = {}) {
       log.fetchedSources.push(id);
       return (opts.sources || {})[id] || { source: `print(${id})\n`, language: 'Python' };
     }
+    // opts.submissions: { id: page } for fetchSubmission (a missing id: the grader can't be reached)
+    async fetchSubmission(id) {
+      log.fetchedSubmissions.push(id);
+      const page = (opts.submissions || {})[id];
+      if (!page) throw new Error('fetch failed');
+      return page;
+    }
     async submit(id, source) { log.submitted.push({ id, source }); return { id: '9' }; }
-    async waitForGrade() { return { points: 100, max: 100, tests: [], done: true }; }
+    async waitForGrade() { return { points: 100, max: 100, tests: opts.gradeTests || [], done: true }; }
   }
   const realClient = require(path.join(EXT, 'lib/client.js'));
   fake('lib/client.js', { ...realClient, GraderClient: FakeClient });

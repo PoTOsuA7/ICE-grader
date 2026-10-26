@@ -149,21 +149,24 @@ class GraderClient {
     }
   }
 
-  // fetch that keeps cookies across redirects and never waits forever. Like a browser, the grader's cookies
-  // (the session = account access) only go to the grader's own origin, and never over plain http.
+  // fetch that keeps cookies across redirects and never waits forever (opts.timeoutMs, 30 s if not given). Like a
+  // browser, the grader's cookies (the session = account access) only go to the grader's own origin, and never over
+  // plain http.
   async _request(url, opts = {}) {
     const home = new URL(this.root);
+    const { timeoutMs = 30000, ...first } = opts;
+    let init = first;
     for (let hops = 0; hops < 8; hops++) {
       const hop = new URL(url);
       const sameSite = hop.origin === home.origin && !(home.protocol === 'https:' && hop.protocol !== 'https:');
-      const headers = { ...(opts.headers || {}) };
+      const headers = { ...(init.headers || {}) };
       if (sameSite && this.cookies.size) headers.Cookie = [...this.cookies].map(([k, v]) => `${k}=${v}`).join('; ');
       let res;
       try {
-        res = await fetch(url, { ...opts, headers, redirect: 'manual', signal: AbortSignal.timeout(30000) });
+        res = await fetch(url, { ...init, headers, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
       } catch (e) {
         // fetch only says "fetch failed" or "aborted": say what it means
-        if (e.name === 'TimeoutError') throw new Error(`${hop.host} did not answer within 30 s - the site may be down or very slow. Try again later.`);
+        if (e.name === 'TimeoutError') throw new Error(`${hop.host} did not answer within ${Math.round(timeoutMs / 1000)} s - the site may be down or very slow. Try again later.`);
         if (!e.cause) throw e;
         throw new Error(`Can't reach ${hop.host} (${e.cause.code || e.cause.message}) - check your internet connection, or the site may be down.`);
       }
@@ -171,7 +174,7 @@ class GraderClient {
       const loc = res.headers.get('location');
       if (res.status >= 300 && res.status < 400 && loc) {
         url = new URL(loc, url).href;
-        opts = { headers: opts.headers }; // follow redirects as GET
+        init = { headers: init.headers }; // follow redirects as GET
         continue;
       }
       return res;
@@ -179,8 +182,8 @@ class GraderClient {
     throw new Error('Too many redirects');
   }
 
-  async _getText(path) {
-    const res = await this._request(new URL(path, this.root).href);
+  async _getText(path, timeoutMs) {
+    const res = await this._request(new URL(path, this.root).href, { timeoutMs });
     if (!res.ok) throw new Error(`GET ${path} failed (${res.status})`);
     return res.text();
   }
@@ -302,6 +305,19 @@ GraderClient.prototype.waitForGrade = async function waitForGrade(submissionId, 
     if (Date.now() - start > timeoutMs) return { ...r, timedOut: true };
     await new Promise((res) => setTimeout(res, intervalMs));
   }
+};
+
+// A graded submission's verdicts and the code they were for, read once (not polled), within timeoutMs.
+// -> parseSubmissionPage() result + { source } (null when the page doesn't show the code)
+GraderClient.prototype.fetchSubmission = async function fetchSubmission(submissionId, timeoutMs) {
+  const html = await this._getText(`submissions/${submissionId}`, timeoutMs);
+  const r = parseSubmissionPage(html);
+  if (!r.readable) {
+    if (isLoginPage(html)) throw new Error(`Session expired while reading submission #${submissionId}`);
+    throw new Error(`Could not read submission #${submissionId} (the grader's page has changed)`);
+  }
+  const code = parseSubmissionSource(html);
+  return { ...r, source: code ? code.source : null };
 };
 
 // Your code for a submission, as you submitted it. -> { source, language }

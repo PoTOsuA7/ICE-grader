@@ -193,6 +193,15 @@ async function runTests(file, cases, cfg) {
   }
 }
 
+// For a test that can't be checked here (SKIP): the grader's verdict on it in your last submission
+// (sub: { id, tests: [{ n, total, label }], code }). Only when that submission ran as many tests as there are here,
+// so the test numbers match. -> { id, label, same } (same: it was this code, null when not known) or null
+function lastSubmitOn(sub, i, count, code) {
+  const t = sub && (sub.tests || []).find((x) => x.n === i + 1 && x.total === count);
+  if (!t) return null;
+  return { id: sub.id, label: t.label, same: sub.code && code ? sub.code === code : null };
+}
+
 // What to start in a VS Code terminal so the student types the input themselves: { cmd, args, cleanup }.
 // A terminal wants a real path, so for Python the interpreter's own path is used instead of "py"/"python".
 async function terminalCommand(file, cfg) {
@@ -220,4 +229,4 @@ async function runSingle(file, input, cfg, files) {
   }
 }
 
-module.exports = { runTests, runSingle, terminalCommand, dataSandbox, killTree, normalize, mapDataPaths, findPython, prepare }; // findPython and prepare: for tests
+module.exports = { runTests, runSingle, terminalCommand, dataSandbox, killTree, normalize, mapDataPaths, lastSubmitOn, findPython, prepare }; // findPython and prepare: for tests

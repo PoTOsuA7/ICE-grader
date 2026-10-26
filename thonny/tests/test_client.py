@@ -3,8 +3,10 @@ import email.parser
 import json
 import os
 import shutil
+import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -61,6 +63,16 @@ class FakeGrader(BaseHTTPRequestHandler):
         if self.path == "/submissions/777":
             return self._html(field("Points", "50/100") + field("Result", tile(1, 2, "Correct", "P") + tile(2, 2, "Wrong answer", "-"))
                               + field("Grading Task Status", "done"))
+        if self.path == "/submissions/888":
+            return self._html(field("Result", tile(1, 2, "Correct", "P") + tile(2, 2, "Wrong answer", "-"))
+                              + field("Grading Task Status", "done")
+                              + "<textarea id='text_sourcecode' style='display:none'>print(1 &lt; 2)\n</textarea>")
+        if self.path == "/submissions/889":
+            time.sleep(0.6)  # a grader that doesn't answer in time
+            try:
+                return self._html(field("Grading Task Status", "done"))
+            except OSError:
+                return None  # the client gave up
         return self._send(404)
 
     def do_POST(self):
@@ -140,12 +152,32 @@ class Client(unittest.TestCase):
         grade = c.wait_for_grade("777")
         self.assertEqual((grade["points"], grade["max"], grade["done"], grade["timed_out"]), (50, 100, True, False))
 
+    def test_a_submission_is_read_once_with_its_verdicts_and_code(self):
+        c = self.signed_in()
+        s = c.fetch_submission("888")
+        self.assertEqual((s["done"], s["source"], [t["label"] for t in s["tests"]]),
+                         (True, "print(1 < 2)\n", ["Correct", "Wrong answer"]))
+        self.assertIsNone(c.fetch_submission("777")["source"])  # a page without the code
+        self.assertEqual(len([e for e in FakeGrader.log if e[1].startswith("/submissions/")]), 2)  # no polling
+        with self.assertRaises(SessionExpired):
+            GraderClient(self.root, {"_session": "old"}).fetch_submission("888")
+
+    def test_a_grader_that_does_not_answer_is_given_up_on_after_the_time_asked_for(self):
+        c = self.signed_in()
+        start = time.time()
+        with self.assertRaises(OSError):
+            c.fetch_submission("889", timeout=0.2)
+        self.assertLess(time.time() - start, 0.55)
+
 
 class FakeClient:
     """Stands in for GraderClient in Core's tests."""
     calls = []
     down = False  # the grader site is unreachable
     expired = False  # the next call finds the session expired
+    cases = None  # the tests fetch_testcases gives, if not the default one
+    submissions = {}  # id -> what fetch_submission gives; another id: the grader can't be reached
+    verdicts = []  # the grade of a submission made from here
 
     def __init__(self, root, cookies=None):
         self.cookies = dict(cookies or {})
@@ -177,17 +209,32 @@ class FakeClient:
 
     def fetch_testcases(self, pid):
         self._call("tests")
-        return [{"input": "1\n", "output": "1\n"}]
+        return FakeClient.cases or [{"input": "1\n", "output": "1\n"}]
 
     def fetch_submission_source(self, sid):
         self._call("source")
         return {"source": "print(1)\n", "language": "Python"}
+
+    def fetch_submission(self, sid, timeout=30):
+        self._call("submission")
+        if sid not in FakeClient.submissions:
+            raise OSError("site down")
+        return FakeClient.submissions[sid]
+
+    def submit(self, pid, source):
+        self._call("submit")
+        return {"id": "500", "language": "Python"}
+
+    def wait_for_grade(self, sid, on_update=None):
+        self._call("grade")
+        return {"points": 100, "max": 100, "status": "done", "done": True, "tests": FakeClient.verdicts}
 
 
 class Saved(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
         FakeClient.calls, FakeClient.down, FakeClient.expired = [], False, False
+        FakeClient.cases, FakeClient.submissions, FakeClient.verdicts = None, {}, []
 
     def tearDown(self):
         shutil.rmtree(self.dir, ignore_errors=True)
@@ -303,6 +350,61 @@ class Saved(unittest.TestCase):
         self.assertEqual((saved, failed, stopped, solutions), (2, [], False, 1))
         self.assertEqual(sorted(os.listdir(os.path.join(out, "05_List"))), ["05_List_15.pdf", "05_List_15.py"])
         self.assertEqual(os.listdir(os.path.join(out, "Exam1")), ["Exam1-2024_Q1A_student.pdf"])
+
+    # ---- a test too long to run here (the grader shows only its first 2 KB): the verdict from your last submission
+    CUT = [{"input": "1\n", "output": "1\n"}, {"input": "9 " * 1024, "output": "5\n", "partial_input": True}]
+    VERDICTS = [{"n": 1, "total": 2, "label": "Correct", "letter": "P"},
+                {"n": 2, "total": 2, "label": "Wrong answer", "letter": "-"}]
+
+    def program(self, code):
+        path = os.path.join(self.dir, "05_List_15.py")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(code)
+        return path
+
+    def test_a_skipped_test_shows_the_last_submissions_verdict_read_once_then_saved(self):
+        FakeClient.cases = self.CUT
+        FakeClient.submissions = {"500": {"done": True, "tests": self.VERDICTS, "source": "print(input())\r\n\r\n"}}
+        c = self.core()
+        c.sign_in("u", "pw")
+        p = c.problems[0]
+        file = self.program("print(input())\n")
+        shown = []  # what the Test Results panel gets as each test finishes
+        _, results = c.run_tests(sys.executable, file, p, 10, lambda i, r: shown.append(r.get("last_submit")))
+        self.assertEqual([r["verdict"] for r in results], ["PASS", "SKIP"])
+        self.assertEqual(shown, [None, {"id": "500", "label": "Wrong answer", "same": True}])
+        self.program("print(int(input()))\n")
+        FakeClient.down = True  # offline now: the saved copy is used
+        _, results = c.run_tests(sys.executable, file, p, 10)
+        self.assertEqual(results[1]["last_submit"], {"id": "500", "label": "Wrong answer", "same": False})
+        self.assertEqual(FakeClient.calls.count("submission"), 1)
+
+    def test_without_the_grader_a_skipped_test_says_to_submit_and_the_grader_isnt_asked_on_every_run(self):
+        c = self.core()
+        c.sign_in("u", "pw")
+        p = c.problems[0]
+        file = self.program("print(1)\n")
+        c.run_tests(sys.executable, file, p, 10)
+        self.assertNotIn("submission", FakeClient.calls)  # nothing skipped: nothing asked
+        FakeClient.cases = self.CUT
+        c.tests(p, refresh=True)
+        for _ in range(2):
+            _, results = c.run_tests(sys.executable, file, p, 10)
+            self.assertEqual(results[1]["verdict"], "SKIP")
+            self.assertNotIn("last_submit", results[1])
+        self.assertEqual(FakeClient.calls.count("submission"), 1)  # one try, not one per run
+
+    def test_submitting_from_here_keeps_the_verdicts_so_a_skipped_test_needs_no_request(self):
+        FakeClient.cases = self.CUT
+        FakeClient.verdicts = [dict(t, label="Correct", letter="P") for t in self.VERDICTS]
+        c = self.core()
+        c.sign_in("u", "pw")
+        p = c.problems[0]
+        file = self.program("print(1)\n")
+        self.assertTrue(c.submit(p, "print(1)\n")["done"])
+        _, results = c.run_tests(sys.executable, file, p, 10)
+        self.assertEqual(results[1]["last_submit"], {"id": "500", "label": "Correct", "same": True})
+        self.assertNotIn("submission", FakeClient.calls)
 
 
 if __name__ == "__main__":

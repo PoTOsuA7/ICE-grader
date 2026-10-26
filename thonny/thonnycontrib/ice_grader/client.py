@@ -204,9 +204,9 @@ class GraderClient:
         self.root = root_url.rstrip("/") + "/"
         self.cookies = dict(cookies or {})
 
-    def _request(self, url, data=None, content_type=None):
-        """Keeps cookies across redirects and never waits forever. Like a browser, the grader's cookies (the session
-        = account access) only go to the grader's own origin, and never over plain http."""
+    def _request(self, url, data=None, content_type=None, timeout=30):
+        """Keeps cookies across redirects and never waits forever (timeout seconds). Like a browser, the grader's
+        cookies (the session = account access) only go to the grader's own origin, and never over plain http."""
         home = urllib.parse.urlsplit(self.root)
         for _ in range(8):
             hop = urllib.parse.urlsplit(url)
@@ -218,7 +218,7 @@ class GraderClient:
                 headers["Cookie"] = "; ".join("%s=%s" % kv for kv in self.cookies.items())
             req = urllib.request.Request(url, data=data, headers=headers, method="POST" if data is not None else "GET")
             try:
-                with _opener.open(req, timeout=30) as r:
+                with _opener.open(req, timeout=timeout) as r:
                     status, hdrs, body = r.status, r.headers, r.read()
             except urllib.error.HTTPError as e:  # 3xx (redirects are followed here) and 4xx/5xx
                 with e:
@@ -237,8 +237,8 @@ class GraderClient:
             return _Response(status, hdrs, body, url)
         raise GraderError("Too many redirects")
 
-    def _get_text(self, path):
-        r = self._request(urllib.parse.urljoin(self.root, path))
+    def _get_text(self, path, timeout=30):
+        r = self._request(urllib.parse.urljoin(self.root, path), timeout=timeout)
         if not r.ok:
             raise GraderError("GET %s failed (%d)" % (path, r.status))
         return r.text()
@@ -365,6 +365,19 @@ class GraderClient:
                 r["timed_out"] = not r["done"]
                 return r
             time.sleep(interval)
+
+    def fetch_submission(self, submission_id, timeout=30):
+        """A graded submission's verdicts and the code they were for, read once (not polled), within timeout seconds.
+        -> parse_submission_page() + source (None when the page doesn't show the code)"""
+        html = self._get_text("submissions/%s" % submission_id, timeout)
+        r = parse_submission_page(html)
+        if not r["readable"]:
+            if is_login_page(html):
+                raise SessionExpired("Session expired while reading submission #%s" % submission_id)
+            raise GraderError("Could not read submission #%s (the grader's page has changed)" % submission_id)
+        code = parse_submission_source(html)
+        r["source"] = code["source"] if code else None
+        return r
 
     def fetch_submission_source(self, submission_id):
         """Your code for a submission, as you submitted it. -> {source, language}"""
