@@ -194,6 +194,12 @@ class Statement(unittest.TestCase):
         self.assertEqual(len(data), len(b"P6\n300 400\n255\n") + 300 * 400 * 3)
         self.assertEqual([(w, h) for w, h, _ in render_pdf(self.path, 300, zoom=2)], [(600, 800), (600, 800)])
 
+    def test_a_high_zoom_on_a_wide_panel_stays_within_the_memory_budget(self):
+        pages = render_pdf(self.path, 300, zoom=4, max_pixels=1_000_000)  # asked: 2 pages of 1200 x 1600
+        self.assertLessEqual(sum(w * h for w, h, _ in pages), 1_010_000)
+        self.assertEqual(pages[0][:2], pages[1][:2])
+        self.assertGreater(pages[0][0], 300)  # still zoomed in, only less
+
     def test_pages_of_different_sizes_keep_their_proportions_and_a_newer_zoom_stops_a_render(self):
         import pypdfium2 as pdfium
         pdf = pdfium.PdfDocument(self.path)

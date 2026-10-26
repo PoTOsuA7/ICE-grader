@@ -8,6 +8,9 @@ from tkinter import ttk
 
 GAP = 10  # pixels around and between pages
 MIN_ZOOM, MAX_ZOOM = 0.4, 4.0  # 1.0 = the pages fit the panel's width
+# All pages together are drawn at most this many pixels (Tk keeps 4 bytes a pixel, so about 100 MB): a wide panel
+# at a high zoom would otherwise take gigabytes.
+MAX_PIXELS = 25_000_000
 WHEEL_PX = 60  # pixels scrolled per notch of the mouse wheel
 _pdfium = threading.Lock()  # pdfium is not thread-safe: one render at a time
 
@@ -36,17 +39,23 @@ def _image_data(bitmap):
     return b"P6\n%d %d\n255\n" % (w, h) + raw
 
 
-def render_pdf(path, width, zoom=1.0, stale=lambda: False):
-    """Every page at one scale, the widest page `width` pixels wide times zoom -> [(w, h, image data)], or None when
-    stale() turns true first (a newer zoom wants another render). Safe to call from a worker thread."""
+def render_pdf(path, width, zoom=1.0, stale=lambda: False, max_pixels=MAX_PIXELS):
+    """Every page at one scale, the widest page `width` pixels wide times zoom (less if all pages together would be
+    over max_pixels) -> [(w, h, image data)], or None when stale() turns true first (a newer zoom wants another
+    render). Safe to call from a worker thread."""
     import pypdfium2 as pdfium
     with _pdfium:
         if stale():
             return None
         pdf = pdfium.PdfDocument(path)
         try:
-            widest = max((pdf.get_page_size(i)[0] for i in range(len(pdf))), default=0) or 595
-            scale = max(0.2, min(8.0, width / widest * zoom))
+            sizes = [pdf.get_page_size(i) for i in range(len(pdf))]
+            widest = max((w for w, h in sizes), default=0) or 595
+            scale = width / widest * zoom
+            pixels = sum(w * h for w, h in sizes) * scale * scale
+            if pixels > max_pixels:
+                scale *= (max_pixels / pixels) ** 0.5
+            scale = max(0.2, min(8.0, scale))
             pages = []
             for i in range(len(pdf)):
                 if stale():
@@ -106,6 +115,7 @@ class StatementView(ttk.Frame):
         self._anchor = None  # (view x, view y, spot) to keep in place on the next draw
         self.generation = 0
         self._width = 0
+        self._drawn_width = 1  # the width the latest render was asked for (the pages' width at zoom 1)
         self._resize_job = None
         self._windowing = self.tk.call("tk", "windowingsystem")
 
@@ -212,6 +222,7 @@ class StatementView(ttk.Frame):
             self.message("This statement isn't a PDF. Click Open to read it.")
             return
         generation, path, zoom, result = self.generation, self.path, self.zoom, {}
+        self._drawn_width = width
 
         def work():
             try:
@@ -241,6 +252,11 @@ class StatementView(ttk.Frame):
         self.canvas.delete("all")
         self.images = [tk.PhotoImage(data=data, format="ppm") for w, h, data in pages]
         self.boxes, width, height = lay_out([(w, h) for w, h, _ in pages], area)
+        # Pages too big to draw at the zoom asked for are drawn smaller: the % says how big they really are.
+        drawn = max(w for w, h, _ in pages) / max(1, self._drawn_width)
+        if drawn < self.zoom - 0.005:
+            self.zoom = drawn
+            self.zoom_label.configure(text="%d%%" % round(drawn * 100))
         for image, (x, y, w, h) in zip(self.images, self.boxes):
             self.canvas.create_image(x, y, image=image, anchor="nw")
         self._size = (width, max(height, self.canvas.winfo_height()))
