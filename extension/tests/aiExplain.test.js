@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const { explainFailures, buildPrompt, MAX_FAILURES } = require('../lib/aiExplain');
+const { explainFailures, buildPrompt, MAX_FAILURES, post } = require('../lib/aiExplain');
 
 const fail = (n, extra = {}) => ({ n, testInput: `${n} ${n}\n`, expected: `${n * 2}\n`, actual: `${n}\n`, verdict: 'FAIL', ...extra });
 
@@ -25,6 +25,30 @@ test('buildPrompt caps how many tests and how much text it sends', () => {
   assert.match(prompt, new RegExp(`${MAX_FAILURES} of 8 shown`));
   assert.match(prompt, /\(truncated\)/);
   assert.ok(prompt.length < 5000 * MAX_FAILURES);
+});
+
+test('buildPrompt sends no folder names (they have the user name in them), only the file names in an error', () => {
+  const stderr = 'Traceback (most recent call last):\n  File "C:\\Users\\somebody\\ICE\\05_List\\05_List_15.py", line 3, in <module>\n'
+    + '  File "/home/somebody/lib/python3/x.py", line 1\nZeroDivisionError: division by zero';
+  const prompt = buildPrompt({ code: '1/0', language: 'py', failures: [fail(1, { verdict: 'RE', stderr })] });
+  assert.doesNotMatch(prompt, /somebody/);
+  assert.match(prompt, /File "05_List_15\.py", line 3, in <module>/);
+  assert.match(prompt, /File "x\.py", line 1\nZeroDivisionError/);
+});
+
+test('the API key never follows a redirect to another address', async () => {
+  const http = require('http');
+  const seen = [];
+  const listen = (handler) => new Promise((resolve) => { const s = http.createServer(handler).listen(0, '127.0.0.1', () => resolve(s)); });
+  const other = await listen((req, res) => { seen.push(req.headers['x-goog-api-key']); res.end('{}'); });
+  const first = await listen((req, res) => {
+    res.writeHead(302, { location: `http://127.0.0.1:${other.address().port}/steal` });
+    res.end();
+  });
+  try {
+    await assert.rejects(() => post('test-key', 'm', {}, `http://127.0.0.1:${first.address().port}/v1beta/models`), /Could not reach the Gemini API/);
+    assert.deepStrictEqual(seen, []);
+  } finally { first.close(); other.close(); }
 });
 
 test('buildPrompt notes a timeout instead of diffing output', () => {

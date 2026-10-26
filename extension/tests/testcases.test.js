@@ -235,3 +235,13 @@ test('a program that exits but leaves a child holding its output is not a TLE', 
   assert.deepStrictEqual(res.map((r) => r.verdict), ['PASS']);
   assert.ok(Date.now() - started < 2500, `took ${Date.now() - started} ms`);
 });
+
+test('a data file whose name ends in a dot is found by the program on every system (same names as the Thonny plug-in)', async (t) => {
+  const { dataName } = require('../lib/runner');
+  assert.deepStrictEqual(['trail.', 'a b. ', '...', 'x.txt'].map((n) => dataName(n, 'win32')), ['trail', 'a b', '', 'x.txt']);
+  assert.strictEqual(dataName('trail.', 'linux'), 'trail.');
+  const f = await pyFile(t, 'print(open(input().split()[0]).read().strip())');
+  if (!f) return;
+  const res = await runTests(f, [{ input: '/data/trail. 1\n', output: '7\n', files: { 'trail.': '7\n', '...': 'x' } }], PY_CFG);
+  assert.deepStrictEqual(res.map((r) => r.verdict), ['PASS'], res[0].stderr);
+});

@@ -10,10 +10,21 @@ import uuid
 _ENTITIES = {"amp": "&", "lt": "<", "gt": ">", "quot": '"', "apos": "'", "ZeroWidthSpace": "", "nbsp": " "}
 
 
+def _char(n):
+    """Like a browser: a number that is no character (0, a surrogate, past U+10FFFF) becomes U+FFFD instead of failing."""
+    return chr(n) if 0 < n <= 0x10FFFF and not 0xD800 <= n <= 0xDFFF else "�"
+
+
 def decode_entities(s):
-    s = re.sub(r"&#x([0-9a-f]+);", lambda m: chr(int(m.group(1), 16)), s, flags=re.I)
-    s = re.sub(r"&#(\d+);", lambda m: chr(int(m.group(1))), s)
+    s = re.sub(r"&#x([0-9a-f]+);", lambda m: _char(int(m.group(1), 16)), s, flags=re.I)
+    s = re.sub(r"&#([0-9]+);", lambda m: _char(int(m.group(1))), s)
     return re.sub(r"&([a-zA-Z]+);", lambda m: _ENTITIES.get(m.group(1), m.group(0)), s)
+
+
+def _float(s):
+    """A number read like JavaScript's parseFloat ("5.5.5" -> 5.5), so a malformed one can't stop a page being read."""
+    m = re.match(r"[0-9]+(?:\.[0-9]*)?|\.[0-9]+", s)
+    return float(m.group(0)) if m else float("nan")
 
 
 def _strip_tags(s):
@@ -29,19 +40,20 @@ def parse_problem_list(html):
     for row in html.split("<tr>")[1:]:
         name = re.search(r"<strong>([\s\S]*?)</strong>", row)
         code = re.search(r"class='text-muted font-monospace'>([\s\S]*?)</div>", row)
-        stmt = re.search(r'href="/problems/(\d+)/download/statement"', row)
+        # [0-9], not \d: like the VS Code version, digits of other scripts (Thai, ...) are no ids or numbers
+        stmt = re.search(r'href="/problems/([0-9]+)/download/statement"', row)
         if not name or not stmt:
             continue
         status = re.search(r"<td>\s*(solved|inprogress|untried)\s*</td>\s*</tr>", row, re.I)
-        score = re.search(r"data-order='([\d.]+)'\s+style='width: 12em", row)
-        sub = re.search(r'href="/submissions/(\d+)">\d+</a>', row)
+        score = re.search(r"data-order='([0-9.]+)'\s+style='width: 12em", row)
+        sub = re.search(r'href="/submissions/([0-9]+)">[0-9]+</a>', row)
         problems.append({
             "id": stmt.group(1),
             "code": _strip_tags(code.group(1) if code else name.group(1)),
             "name": _strip_tags(name.group(1)),
-            "has_testcases": bool(re.search(r"/testcases/show_problem/\d+", row)),
+            "has_testcases": bool(re.search(r"/testcases/show_problem/[0-9]+", row)),
             "status": status.group(1).lower() if status else "untried",
-            "score": float(score.group(1)) if score else 0,
+            "score": _float(score.group(1)) if score else 0,
             "last_submission_id": sub.group(1) if sub else None,
         })
     return problems
@@ -55,13 +67,13 @@ def _field_after(html, label):
 
 def parse_submission_page(html):
     """submissions/ID -> {points, max, status, readable, done, runtime, tests: [{n, total, label, letter}]}"""
-    pts = re.search(r"([\d.]+)\s*/\s*([\d.]+)", _field_after(html, "Points"))
+    pts = re.search(r"([0-9.]+)\s*/\s*([0-9.]+)", _field_after(html, "Points"))
     status = _field_after(html, "Grading Task Status").lower()
     tests = [{"n": int(m.group(1)), "total": int(m.group(2)), "label": m.group(3), "letter": m.group(4)}
-             for m in re.finditer(r'title="Test (\d+) of (\d+): ([^"]+)">([^<]*)<', html)]
+             for m in re.finditer(r'title="Test ([0-9]+) of ([0-9]+): ([^"]+)">([^<]*)<', html)]
     return {
-        "points": float(pts.group(1)) if pts else None,
-        "max": float(pts.group(2)) if pts else None,
+        "points": _float(pts.group(1)) if pts else None,
+        "max": _float(pts.group(2)) if pts else None,
         "status": status,
         # False when the page has no "Grading Task Status" row at all: not a submission page any more
         "readable": "\nGrading Task Status\n</div>" in html,
@@ -69,6 +81,12 @@ def parse_submission_page(html):
         "runtime": _field_after(html, "Runtime"),
         "tests": tests,
     }
+
+
+def tile_passed(t):
+    """A verdict tile of a passed test: the letter P, or a label that says Correct (not "Incorrect"). Same rule as
+    the VS Code version's tilePassed()."""
+    return t["letter"].strip() == "P" or bool(re.match(r"\s*correct\b", t["label"], re.I))
 
 
 def parse_submission_source(html):
@@ -83,13 +101,13 @@ def parse_submission_source(html):
 def parse_submit_form(html):
     """direct_edit_problem/ID -> {token, problem_id, languages: [{id, name}]}"""
     token = re.search(r'name="authenticity_token" value="([^"]+)"', html)
-    pid = (re.search(r'name="submission\[problem_id\]"[^>]*value="(\d+)"', html)
-           or re.search(r'value="(\d+)"[^>]*name="submission\[problem_id\]"', html))
+    pid = (re.search(r'name="submission\[problem_id\]"[^>]*value="([0-9]+)"', html)
+           or re.search(r'value="([0-9]+)"[^>]*name="submission\[problem_id\]"', html))
     select = re.search(r'<select[^>]*id="language_id"[\s\S]*?</select>', html)
     languages = []
     if select:
         languages = [{"id": m.group(1), "name": decode_entities(m.group(2)).strip()}
-                     for m in re.finditer(r'<option[^>]*value="(\d+)"[^>]*>([^<]*)</option>', select.group(0))]
+                     for m in re.finditer(r'<option[^>]*value="([0-9]+)"[^>]*>([^<]*)</option>', select.group(0))]
     return {"token": decode_entities(token.group(1)) if token else None,
             "problem_id": pid.group(1) if pid else None, "languages": languages}
 
@@ -114,7 +132,7 @@ _UNITS = {"byte": 1, "bytes": 1, "kb": 1024, "mb": 1024 ** 2, "gb": 1024 ** 3}
 
 
 def _to_bytes(num, unit):
-    return float(num.replace(",", "")) * _UNITS[unit.lower()]
+    return _float(num.replace(",", "")) * _UNITS[unit.lower()]
 
 
 def _page_files(html, cap):
@@ -122,7 +140,7 @@ def _page_files(html, cap):
     (e.g. "Showing the first 2 KB of each file"). A file is "cut" when the size says there is more than shown.
     -> [{name, text, cut}]"""
     files = []
-    for m in re.finditer(r"<h6[^>]*>([^<]*)</h6>[\s\S]*?<span class='text-secondary small'>([\d.,]+)\s*(Bytes?|KB|MB|GB)"
+    for m in re.finditer(r"<h6[^>]*>([^<]*)</h6>[\s\S]*?<span class='text-secondary small'>([0-9.,]+)\s*(Bytes?|KB|MB|GB)"
                          r"</span>[\s\S]*?<textarea[^>]*>([\s\S]*?)</textarea>", html, re.I):
         name, num, unit, raw = m.groups()
         text = decode_entities(raw)
@@ -138,14 +156,14 @@ def _page_files(html, cap):
 
 
 def _cap(html):
-    m = re.search(r"Showing the first ([\d.,]+)\s*(Bytes?|KB|MB)", html, re.I)
+    m = re.search(r"Showing the first ([0-9.,]+)\s*(Bytes?|KB|MB)", html, re.I)
     return _to_bytes(m.group(1), m.group(2)) if m else float("inf")
 
 
 def parse_testcase_page(html):
     """testcases/show_problem/ID -> [{id, input, output, input_cut, output_cut}]"""
     cap = _cap(html)
-    panes = re.split(r"<div class='tab-pane[^']*' id='tc(\d+)'", html.split("id='data-files'")[0])
+    panes = re.split(r"<div class='tab-pane[^']*' id='tc([0-9]+)'", html.split("id='data-files'")[0])
     cases = []
     for i in range(1, len(panes) - 1, 2):
         files = _page_files(panes[i + 1], cap)
@@ -189,6 +207,16 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 _opener = urllib.request.build_opener(_NoRedirect())
 
+# The only file types a statement is saved as. Any other name from the grader (statement.bat, x.exe, ...) is not
+# trusted: Open would run it.
+STATEMENT_EXTS = (".pdf", ".html", ".htm", ".txt", ".md", ".png", ".jpg", ".jpeg", ".gif")
+
+
+def _encrypted(url):
+    """https, or plain http only to this computer (a test server), like the VS Code version."""
+    u = urllib.parse.urlsplit(url)
+    return u.scheme == "https" or (u.scheme == "http" and u.hostname in ("localhost", "127.0.0.1", "::1"))
+
 
 def _multipart(fields):
     boundary = "----icegrader" + uuid.uuid4().hex
@@ -207,6 +235,9 @@ class GraderClient:
     def _request(self, url, data=None, content_type=None):
         """Keeps cookies across redirects and never waits forever. Like a browser, the grader's cookies (the session
         = account access) only go to the grader's own origin, and never over plain http."""
+        if not _encrypted(self.root):  # the password and the saved session would travel unencrypted
+            raise GraderError("The grader address must start with https:// (it is %s) - your password would be sent "
+                              "unencrypted." % self.root)
         home = urllib.parse.urlsplit(self.root)
         for _ in range(8):
             hop = urllib.parse.urlsplit(url)
@@ -286,9 +317,10 @@ class GraderClient:
                 raise GraderError("The grader did not return a statement for this problem" + (" (%s)" % flash if flash else ""))
             return r.body, ".html"
         fn = re.search(r'filename="?([^";]+)"?', r.headers.get("Content-Disposition") or "")
-        ext = re.search(r"\.[A-Za-z0-9]+$", fn.group(1)) if fn else None
-        ext = ext.group(0) if ext else {"application/pdf": ".pdf", "text/plain": ".txt"}.get(ctype, ".bin")
-        return r.body, ext.lower()
+        named = re.search(r"\.[A-Za-z0-9]+$", fn.group(1)) if fn else None
+        named = named.group(0).lower() if named else None
+        ext = named if named in STATEMENT_EXTS else {"application/pdf": ".pdf", "text/plain": ".txt"}.get(ctype, ".bin")
+        return r.body, ext
 
     def fetch_testcases(self, problem_id):
         """-> [{input, output, partial_input?, partial_output?, files?}]. Read from the test case page only: the
@@ -338,7 +370,7 @@ class GraderClient:
             raise GraderError("Submit failed (%d)" % r.status)
         # The grader redirects to the new submission. Otherwise use the problem's newest submission, but only if it
         # is newer than before: a refused submit (too long, problem closed, ...) re-renders the page.
-        m = re.search(r"/submissions/(\d+)", r.url)
+        m = re.search(r"/submissions/([0-9]+)", r.url)
         sid = m.group(1) if m else None
         if not sid:
             newest = self._last_submission(problem_id)

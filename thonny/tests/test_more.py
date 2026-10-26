@@ -3,8 +3,11 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from thonnycontrib.ice_grader import ai
 from thonnycontrib.ice_grader.ai import CODE_REMOVED, AIError, build_prompt, call_gemini, without_code
 from thonnycontrib.ice_grader.clipboard import copy_command, copy_file
 from thonnycontrib.ice_grader.statement import GAP, can_show_pdfs, lay_out, position_of, render_pdf, spot_at, wheel_steps
@@ -35,6 +38,50 @@ class Explain(unittest.TestCase):
         self.assertIn("data.txt:", prompt)
         self.assertIn("Failing tests (3 of 4 shown):", prompt)
         self.assertIn("(First difference from expected: line 1, column 1)", prompt)
+
+    def test_the_prompt_has_no_folder_names_only_the_file_names_in_an_error(self):
+        stderr = ('Traceback (most recent call last):\n  File "C:\\Users\\somebody\\ICE\\05_List\\05_List_15.py", line 3, in <module>\n'
+                  '  File "/home/somebody/lib/python3/x.py", line 1\nZeroDivisionError: division by zero')
+        prompt = build_prompt("1/0", [dict(FAILURE, verdict="RE", stderr=stderr)])
+        self.assertNotIn("somebody", prompt)
+        self.assertIn('File "05_List_15.py", line 3, in <module>', prompt)
+        self.assertIn('File "x.py", line 1\nZeroDivisionError', prompt)
+
+    def test_the_api_key_never_follows_a_redirect_to_another_address(self):
+        seen = []
+
+        class Other(BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.append(self.headers.get("x-goog-api-key"))
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"{}")
+
+            def log_message(self, *args):
+                pass
+
+        other = ThreadingHTTPServer(("127.0.0.1", 0), Other)
+
+        class First(Other):
+            def do_POST(self):
+                self.send_response(302)
+                self.send_header("Location", "http://127.0.0.1:%d/steal" % other.server_port)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+        first = ThreadingHTTPServer(("127.0.0.1", 0), First)
+        for s in (first, other):
+            threading.Thread(target=s.serve_forever, daemon=True).start()
+        real = ai.API_BASE
+        ai.API_BASE = "http://127.0.0.1:%d/v1beta/models" % first.server_port
+        try:
+            status, _ = ai.post("test-key", "m", {})
+        finally:
+            ai.API_BASE = real
+            for s in (first, other):
+                s.shutdown()
+                s.server_close()
+        self.assertEqual((status, seen), (302, []))
 
     def test_no_code_comes_back(self):
         self.assertEqual(without_code("Line 2 adds 2.\n```python\nprint(n * 2)\n```\nUse `n`.\n```\nx"),

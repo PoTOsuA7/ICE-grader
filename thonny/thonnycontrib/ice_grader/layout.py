@@ -2,15 +2,21 @@
 import os
 import re
 
-_EXAM = re.compile(r"(?<![a-z])exam(?![a-z])", re.I)
-_EXAM_NUMBER = re.compile(r"(?<![a-z])exam[\s_-]*(\d+)", re.I)
+# ASCII letters and digits only, like the VS Code version (re.I alone would also take e.g. the Kelvin sign as a "k",
+# and \d Thai digits)
+_EXAM = re.compile(r"(?<![a-zA-Z])(?i:exam)(?![a-zA-Z])")
+_EXAM_NUMBER = re.compile(r"(?<![a-zA-Z])(?i:exam)[\s_-]*([0-9]+)")
+_DEVICE = re.compile(r"(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)", re.I)  # Windows device names (CON, NUL.py, ...)
 
 
 def safe_name(s):
-    """A file or folder name made from a problem code. Never "." or ".." (or empty), which would point outside."""
+    """A file or folder name made from a problem code. Never "." or ".." (or empty), which would point outside, never
+    a Windows device name, and no dot at the end (Windows drops it). The same as the VS Code version's safeName."""
     name = re.sub(r"[^\w\-.]+", "_", s, flags=re.ASCII)
-    name = re.sub(r"_+", "_", name).strip("_")
-    return "problem" if not name or re.fullmatch(r"\.+", name) else name
+    name = re.sub(r"_+", "_", name).strip("_").rstrip(".")
+    if not name:
+        return "problem"
+    return "_" + name if _DEVICE.match(name) else name
 
 
 def is_exam(code):

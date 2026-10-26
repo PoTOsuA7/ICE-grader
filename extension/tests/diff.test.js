@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const { normalize, firstDifference, visible } = require('../lib/diff');
+const { normalize, firstDifference, visible, comparedOutputs } = require('../lib/diff');
 
 test('normalize ignores CRLF, trailing spaces and trailing blank lines', () => {
   assert.strictEqual(normalize('a  \r\nb\t\r\n\r\n\r\n'), 'a\nb');
@@ -29,6 +29,13 @@ test('real value difference is not spacing-only', () => {
 test('missing and extra lines', () => {
   assert.deepStrictEqual(firstDifference('a\nb', 'a'), { line: 2, kind: 'missing', expected: 'b' });
   assert.deepStrictEqual(firstDifference('a', 'a\nb'), { line: 2, kind: 'extra', actual: 'b' });
+});
+
+test('an emoji is one column, and a cut-off line never keeps half an emoji (same as the Thonny plug-in)', () => {
+  assert.strictEqual(firstDifference('\u{1F600}a', '\u{1F600}b').index, 1);
+  // only the first emoji of the cut line is known: the program's "😀🤖" matches it
+  assert.deepStrictEqual(comparedOutputs({ output: '\u{1F600}\u{1F600}', partialOutput: true }, '\u{1F600}\u{1F916}\n'),
+    { expected: '\u{1F600}', actual: '\u{1F600}' });
 });
 
 test('visible marks spaces, tabs and carriage returns', () => {

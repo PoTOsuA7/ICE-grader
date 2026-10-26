@@ -41,8 +41,22 @@ def without_code(text):
     return text.strip()
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None  # the key goes to Google only: urllib would send it on to wherever a redirect points
+
+
+_opener = urllib.request.build_opener(_NoRedirect())
+
+
 def _clip(s):
     return s[:MAX_FIELD] + "\n... (truncated)" if len(s) > MAX_FIELD else s
+
+
+def _hide_paths(s):
+    """Python's error messages name each file by its full path, which has the computer's user name in it: send only
+    the file's own name."""
+    return re.sub(r'File "[^"\n]*[\\/]([^"\\/\n]*)"', r'File "\1"', s)
 
 
 def describe_failure(f):
@@ -61,7 +75,7 @@ def describe_failure(f):
             lines.append("(First difference from expected: %s)" % where)
     lines += ["Actual output:", "```", _clip(f.get("actual") or "(no output)"), "```"]
     if f.get("stderr"):
-        lines += ["stderr:", "```", _clip(f["stderr"]), "```"]
+        lines += ["stderr:", "```", _clip(_hide_paths(f["stderr"])), "```"]
     if f["verdict"] == "TLE":
         lines.append("(Did not finish within the time limit - suspect an infinite loop or a too-slow algorithm.)")
     return "\n".join(lines)
@@ -90,7 +104,7 @@ def post(api_key, model, body, timeout=120):
     req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST",
                                  headers={"x-goog-api-key": api_key, "Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _opener.open(req, timeout=timeout) as r:
             status, raw = r.status, r.read()
     except urllib.error.HTTPError as e:
         with e:

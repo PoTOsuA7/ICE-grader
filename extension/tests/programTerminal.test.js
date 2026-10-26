@@ -62,6 +62,12 @@ test('Ctrl+C, or closing the terminal, stops a program that is waiting for input
   }
 });
 
+test('control characters in the intro (a data file name comes from the grader) never reach the terminal', async () => {
+  const r = await run('', [], { intro: 'type data/x\x1b]0;title\x07\x1b[2J\x9b1m.txt\nnext line' });
+  const intro = plain(r.shown()).split('\r\n--- program')[0];
+  assert.strictEqual(intro, 'type data/x]0;title[2J1m.txt\r\nnext line\r\n');
+});
+
 test('arrow keys are ignored; a program that can\'t start says so; closing before it opens still cleans up', async () => {
   const r = await run(READ_TWO, ['1', '\x1b[A', '\x1b[D', '\r', '2\r']);
   assert.match(r.shown(), /got 1\|2/);

@@ -34,6 +34,13 @@ def kill_tree(proc):
                 pass
 
 
+def data_name(name, platform=sys.platform):
+    """The name a data file gets: never a path. On Windows also without the dots and spaces at the end, which Windows
+    drops anyway ("..." would be the sandbox folder itself). The same as the VS Code version's dataName."""
+    base = os.path.basename(name.replace("\\", "/").rstrip("/"))
+    return base.rstrip(". ") if platform == "win32" else base
+
+
 def data_sandbox(files):
     """Data files: on the grader a problem's data files sit in /data/ and the test input names them by that
     absolute path (e.g. "/data/data.txt 2562"). Locally they're written to a temp folder, the program runs there,
@@ -45,7 +52,7 @@ def data_sandbox(files):
     try:
         os.mkdir(os.path.join(d, "data"))
         for name, text in files.items():
-            safe = os.path.basename(name.replace("\\", "/"))  # never write outside the sandbox
+            safe = data_name(name)  # never write outside the sandbox
             if not safe or safe in (".", ".."):
                 continue
             for target in [os.path.join(d, "data", safe)] + ([os.path.join(d, safe)] if safe != "data" else []):
@@ -59,7 +66,7 @@ def data_sandbox(files):
 
 def map_data_paths(text, files):
     for name in files or {}:
-        text = text.replace("/data/" + name, "data/" + os.path.basename(name.replace("\\", "/")))
+        text = text.replace("/data/" + name, "data/" + data_name(name))
     return text
 
 

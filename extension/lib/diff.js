@@ -18,8 +18,11 @@ function firstDifference(expected, actual) {
     if (e[i] === a[i]) continue;
     if (e[i] === undefined) return { line: i + 1, kind: 'extra', actual: a[i] };
     if (a[i] === undefined) return { line: i + 1, kind: 'missing', expected: e[i] };
+    // index counts characters, not UTF-16 units: an emoji is one column
+    const ec = Array.from(e[i]);
+    const ac = Array.from(a[i]);
     let index = 0;
-    while (index < e[i].length && index < a[i].length && e[i][index] === a[i][index]) index++;
+    while (index < ec.length && index < ac.length && ec[index] === ac[index]) index++;
     const collapse = (s) => s.replace(/\s+/g, ' ').trim();
     return {
       line: i + 1, kind: 'differs', expected: e[i], actual: a[i], index,
@@ -40,13 +43,15 @@ function comparedOutputs(tc, actual) {
   if (!tc.partialOutput) return { expected: tc.output, actual };
   const shown = normLines(tc.output);
   const complete = shown.slice(0, -1);
-  // Drop the last character of the cut line too: the 2 KB cut can split a multi-byte character.
-  const cut = (shown[shown.length - 1] || '').slice(0, -1);
+  // Drop the last character of the cut line too: the 2 KB cut can split a multi-byte character. (Characters, not
+  // UTF-16 units, so an emoji is never cut in half.)
+  const cutChars = Array.from(shown[shown.length - 1] || '').slice(0, -1);
+  const cut = cutChars.join('');
   if (!complete.length && !cut) return { expected: '', actual: '', unchecked: true };
   const mine = normLines(actual);
   const expected = cut ? [...complete, cut] : complete;
   const got = mine.slice(0, complete.length);
-  if (cut && mine.length > complete.length) got.push(mine[complete.length].slice(0, cut.length));
+  if (cut && mine.length > complete.length) got.push(Array.from(mine[complete.length]).slice(0, cutChars.length).join(''));
   return { expected: expected.join('\n'), actual: got.join('\n') };
 }
 

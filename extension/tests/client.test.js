@@ -125,6 +125,21 @@ test('a statement link that lands on a normal grader page is not called an expir
   } finally { srv.restore(); }
 });
 
+test('a statement is only saved as a document or picture type, never as one that runs when opened', async () => {
+  const sent = { 1: ['application/octet-stream', 'statement.bat'], 2: ['application/pdf', 'x.EXE'], 3: ['application/pdf', 'a.pdf.lnk'],
+    4: ['text/plain', 'x.hta'], 5: ['application/pdf', '05_List_15.PDF'], 6: ['application/pdf', 'notes.Html'] };
+  const routes = {};
+  for (const [id, [type, name]] of Object.entries(sent)) {
+    routes[`GET /problems/${id}/download/statement`] = () => [200, '%PDF', { 'content-type': type, 'content-disposition': `attachment; filename="${name}"` }];
+  }
+  const srv = fakeServer(routes);
+  try {
+    const exts = [];
+    for (const id of Object.keys(sent)) exts.push((await client().fetchStatement(id)).ext);
+    assert.deepStrictEqual(exts, ['.bin', '.pdf', '.pdf', '.txt', '.pdf', '.html']);
+  } finally { srv.restore(); }
+});
+
 test('a .c file is matched to a language listed as "ANSI C"', async () => {
   const form = html(`<form action="/main/submit"><input name="authenticity_token" value="tok2" />
 <input name="submission[problem_id]" value="5" /><select id="language_id" name="language_id">

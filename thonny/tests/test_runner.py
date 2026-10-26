@@ -6,7 +6,7 @@ import tempfile
 import time
 import unittest
 
-from thonnycontrib.ice_grader.runner import run_tests
+from thonnycontrib.ice_grader.runner import data_name, run_tests
 
 
 class Runner(unittest.TestCase):
@@ -48,6 +48,15 @@ class Runner(unittest.TestCase):
         cases = [{"input": "/data/data.txt\n", "output": "6\n", "files": files},
                  {"input": "/data/da", "output": "6\n", "files": files, "partial_input": True}]
         self.assertEqual(self.run_cases(code, cases), ["PASS", "SKIP"])
+
+    def test_odd_data_file_names_are_found_and_never_break_the_run(self):
+        # the same names as the VS Code version's dataName: "..." would be the sandbox folder itself on Windows
+        self.assertEqual([data_name(n, "win32") for n in ("trail.", "a b. ", "...", "x.txt", "dir/", "..\\e.txt")],
+                         ["trail", "a b", "", "x.txt", "dir", "e.txt"])
+        self.assertEqual(data_name("trail.", "linux"), "trail.")
+        code = "print(open(input().split()[0]).read().strip())\n"
+        files = {"trail.": "7\n", "...": "x"}
+        self.assertEqual(self.run_cases(code, [{"input": "/data/trail. 1\n", "output": "7\n", "files": files}]), ["PASS"])
 
     def test_output_on_stderr_and_a_lot_of_output(self):
         results = run_tests(sys.executable, self.program("import sys\nprint('x' * 3000000)\nprint('oops', file=sys.stderr)\n"),

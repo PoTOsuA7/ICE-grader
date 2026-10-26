@@ -213,7 +213,8 @@ function statementHtml(webview, statementPath, libDir) {
       pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(workerBlob);
 
       const pdfArrayBuffer = await fetch("${pdfUri}").then((r) => r.arrayBuffer());
-      pdfDoc = await pdfjsLib.getDocument({ data: pdfArrayBuffer }).promise;
+      // isEvalSupported: false - fonts are never compiled to code (CVE-2024-4367 in this pdf.js; the CSP blocks it too)
+      pdfDoc = await pdfjsLib.getDocument({ data: pdfArrayBuffer, isEvalSupported: false }).promise;
       docLoaded(pdfDoc);
 
       clearTimeout(loadTimeout);
