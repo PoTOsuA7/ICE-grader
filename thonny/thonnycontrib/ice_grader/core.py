@@ -7,6 +7,7 @@ import re
 import shutil
 import threading
 import time
+import tokenize
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 
@@ -23,6 +24,13 @@ SUBMISSION_FILE = "submission.json"  # your latest submission's verdicts, for te
 
 class NotSignedIn(GraderError):
     pass
+
+
+def read_source(filename):
+    """A program's code as Python (and Thonny) read it: UTF-8, or the encoding its "# -*- coding: ... -*-" line
+    names. Raises OSError, or SyntaxError when it can't be read as text."""
+    with tokenize.open(filename) as f:
+        return f.read()
 
 
 def language_ext(language):
@@ -246,9 +254,8 @@ class Core:
         last submission, if known: result["last_submit"] (see runner.last_submit_on)."""
         cases = self.tests(p)
         try:
-            with open(file, encoding="utf-8", errors="replace") as f:
-                code = code_hash(f.read())
-        except OSError:
+            code = code_hash(read_source(file))
+        except (OSError, SyntaxError):
             code = None
         found = []  # the last submission, looked up at the first skipped test
 

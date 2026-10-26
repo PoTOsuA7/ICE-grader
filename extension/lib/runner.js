@@ -119,6 +119,15 @@ function dataSandbox(files) {
   return { dir, cleanup: () => removeDir(dir) };
 }
 
+// The folder a test runs in: the data sandbox, else a new empty folder, as on the grader. Not VS Code's own working
+// folder, which on Windows is its program folder: a file the program writes would land there (or fail to).
+function runFolder(files) {
+  const box = dataSandbox(files);
+  if (box) return box;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nattee-run-'));
+  return { dir, cleanup: () => removeDir(dir) };
+}
+
 function mapDataPaths(input, files) {
   if (!files) return input;
   let out = input;
@@ -180,11 +189,11 @@ async function runTests(file, cases, cfg) {
     const results = [];
     for (const tc of cases) {
       if (tc.partialInput) { results.push({ verdict: 'SKIP', skipped: 'input', ms: 0, stdout: '', stderr: '' }); continue; }
-      const box = dataSandbox(tc.files);
+      const box = runFolder(tc.files);
       let r;
       try {
-        r = await runOne(prep.cmd, prep.args, mapDataPaths(tc.input, tc.files), cfg.timeoutMs, box && box.dir);
-      } finally { if (box) box.cleanup(); }
+        r = await runOne(prep.cmd, prep.args, mapDataPaths(tc.input, tc.files), cfg.timeoutMs, box.dir);
+      } finally { box.cleanup(); }
       if (r.spawnError) throw new Error(`Could not start "${prep.cmd}": ${r.spawnError}`);
       const cmp = comparedOutputs(tc, r.stdout);
       let verdict = 'PASS';
@@ -225,8 +234,8 @@ async function runSingle(file, input, cfg, files) {
   const prep = await prepare(file, cfg);
   let box = null;
   try {
-    box = dataSandbox(files);
-    const r = await runOne(prep.cmd, prep.args, mapDataPaths(input, files), cfg.timeoutMs, box && box.dir);
+    box = runFolder(files);
+    const r = await runOne(prep.cmd, prep.args, mapDataPaths(input, files), cfg.timeoutMs, box.dir);
     if (r.spawnError) throw new Error(`Could not start "${prep.cmd}": ${r.spawnError}`);
     const verdict = r.timedOut ? 'TLE' : r.code !== 0 ? 'RE' : 'OK';
     return { verdict, ms: r.ms, stdout: r.stdout, stderr: r.stderr };

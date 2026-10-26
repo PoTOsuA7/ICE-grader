@@ -1,9 +1,10 @@
 """Reading the grader's pages and comparing outputs (same cases as the VS Code extension's tests)."""
+import types
 import unittest
 
 from thonnycontrib.ice_grader.client import (decode_entities, parse_data_files, parse_problem_list, parse_submission_page,
                                              parse_submission_source, parse_submit_form, parse_testcase_page, tile_passed)
-from thonnycontrib.ice_grader import last_submit_text, summary_text
+from thonnycontrib.ice_grader import MAX_LINE, GraderResultsView, clip_line, last_submit_text, summary_text
 from thonnycontrib.ice_grader.diff import checked_part, code_hash, compared_outputs, first_difference, normalize, visible
 from thonnycontrib.ice_grader.layout import chapter_of, is_exam, safe_name, solution_path
 from thonnycontrib.ice_grader.runner import last_submit_on
@@ -152,6 +153,15 @@ class Compare(unittest.TestCase):
         self.assertIsNone(first_difference("1\n", "1  \n\n"))
         self.assertEqual(visible("a b\t"), "a·b→")
 
+    def test_a_form_feed_or_other_control_character_is_shown_and_is_no_spacing_mistake(self):
+        # os.system("cls") with no console prints a form feed: "differs only in spaces: expected 3, you printed 3"
+        self.assertFalse(first_difference("3\n", "\f3\n")["spacing_only"])
+        self.assertEqual(visible("\f3\x00\x1b[0m\x07\b\x7f\r"), "␌3␀␛[0m␇␈␡␍")  # the same as the VS Code version
+        self.assertTrue(first_difference("a \t b", "  a b")["spacing_only"])
+        self.assertFalse(first_difference("a b", "a b")["spacing_only"])
+        text = panel_text("FAIL", "\f3\n", output="3\n")
+        self.assertIn("differs at column 1: expected '3', you printed '\\x0c3'", text)
+
     def test_cut_expected_output_checks_the_part_that_is_shown(self):
         tc = {"output": "1\n2\n34", "partial_output": True}
         self.assertEqual(compared_outputs(tc, "1\n2\n345\n6\n"), {"expected": "1\n2\n3", "actual": "1\n2\n3"})
@@ -215,6 +225,35 @@ class Skipped(unittest.TestCase):
         self.assertEqual(summary_text([{"verdict": "PASS"}, skip]), ("1 of 1 passed (1 skipped)", "PASS"))
         self.assertEqual(summary_text([{"verdict": "FAIL"}, {"verdict": "PASS"}]), ("1 of 2 passed", "FAIL"))
         self.assertEqual(summary_text([skip]), ("0 of 0 passed (1 skipped)", "FAIL"))
+
+
+def panel_text(verdict, stdout="", stderr="", output="ok\n"):
+    """What the Test Results panel shows for a test, without a display."""
+    out = []
+    view = types.SimpleNamespace(total=1, passed=0, showing="tests", write=lambda s, *tags: out.append(s))
+    GraderResultsView.add(view, 0, {"input": "1\n", "output": output}, {"verdict": verdict, "ms": 5, "stdout": stdout, "stderr": stderr})
+    return "".join(out)
+
+
+class ResultsText(unittest.TestCase):
+    def test_one_huge_line_is_cut_to_a_readable_length(self):
+        # print("x" * 50_000_000, end=""): the runner keeps 1 MiB of it, and Tk takes hours to lay out such a line
+        text = panel_text("FAIL", "x" * (1 << 20))
+        self.assertLess(max(map(len, text.split("\n"))), 2 * MAX_LINE)
+        self.assertIn("x" * MAX_LINE + " ... (%d more characters)" % ((1 << 20) - MAX_LINE), text)
+        text = panel_text("RE", stderr="Traceback:\nValueError: " + "y" * 500000)
+        self.assertLess(max(map(len, text.split("\n"))), 2 * MAX_LINE)
+        self.assertIn("ValueError: yyy", text)
+        self.assertIn("more characters)", text)
+
+    def test_a_long_line_shows_where_it_differs(self):
+        text = panel_text("FAIL", "a" * 5000 + "c" + "z" * 5000, output="a" * 5000 + "b" + "z" * 5000)
+        self.assertLess(max(map(len, text.split("\n"))), 3 * MAX_LINE)
+        self.assertIn("differs at column 5001: expected (4980 characters) ... '%s" % ("a" * 20 + "b"), text)
+        self.assertIn("you printed (4980 characters) ... '%s" % ("a" * 20 + "c"), text)
+        self.assertIn("z' ... (4721 more characters)", text)
+        self.assertEqual(clip_line("short", 40, repr), "'short'")
+        self.assertEqual(clip_line("z" * (MAX_LINE + 5), 9999), "(5 characters) ... " + "z" * MAX_LINE)
 
 
 class Layout(unittest.TestCase):

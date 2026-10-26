@@ -4,6 +4,8 @@ const { firstDifference, visible, comparedOutputs, checkedPart } = require('./di
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const clip = (s) => (s.length > 3000 ? s.slice(0, 3000) + ' ... (truncated)' : s);
+// Python prints the error at the end of stderr: a long one keeps its end.
+const clipEnd = (s) => (s.length > 3000 ? '(truncated) ... ' + s.slice(-3000) : s);
 
 const STYLE = `
   body{font-family:var(--vscode-font-family);color:var(--vscode-foreground);padding:8px}
@@ -27,22 +29,36 @@ const STYLE = `
 
 const page = (body) => `<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';"><style>${STYLE}</style></head><body>${body}</body></html>`;
 
+const MAX_LINE = 300; // characters of a line shown in a difference: one line of a million would fill the view
+
+// part(chars, 0) for a short line; for a long one part() of MAX_LINE of its characters from `from`, saying around
+// it what was left out. The same cut as the Thonny plug-in's clip_line.
+function clipLine(chars, from, part) {
+  if (chars.length <= MAX_LINE) return part(chars, 0);
+  const start = Math.max(0, Math.min(from, chars.length - MAX_LINE));
+  const end = start + MAX_LINE;
+  return `${start ? `(${start} characters) ... ` : ''}${part(chars.slice(start, end), start)}${
+    end < chars.length ? ` ... (${chars.length - end} more characters)` : ''}`;
+}
+const lineHtml = (s) => clipLine(Array.from(visible(s)), 0, (v) => esc(v.join('')));
+
 // Explains where two outputs first differ, with whitespace made visible.
 function diffHtml(expected, actual) {
   const d = firstDifference(expected, actual);
   if (!d) return '';
   if (d.kind === 'missing') {
-    return `<div class="diff"><b>Your output stops early.</b> Line ${d.line} should be: <code>${esc(visible(d.expected))}</code></div>`;
+    return `<div class="diff"><b>Your output stops early.</b> Line ${d.line} should be: <code>${lineHtml(d.expected)}</code></div>`;
   }
   if (d.kind === 'extra') {
-    return `<div class="diff"><b>Your output has extra lines.</b> Line ${d.line} should not be there: <code>${esc(visible(d.actual))}</code></div>`;
+    return `<div class="diff"><b>Your output has extra lines.</b> Line ${d.line} should not be there: <code>${lineHtml(d.actual)}</code></div>`;
   }
-  const mark = (s) => {
-    const v = Array.from(visible(s)); // d.index counts characters
-    const head = esc(v.slice(0, d.index).join(''));
-    const ch = v[d.index];
-    return ch === undefined ? `${head}<mark>⏎</mark>` : `${head}<mark>${esc(ch)}</mark>${esc(v.slice(d.index + 1).join(''))}`;
-  };
+  // d.index counts characters; a long line is shown from a little before it
+  const mark = (s) => clipLine(Array.from(visible(s)), d.index - 20, (v, start) => {
+    const i = d.index - start;
+    const head = esc(v.slice(0, i).join(''));
+    const ch = v[i];
+    return ch === undefined ? `${head}<mark>⏎</mark>` : `${head}<mark>${esc(ch)}</mark>${esc(v.slice(i + 1).join(''))}`;
+  });
   return `<div class="diff"><b>First difference: line ${d.line}, column ${d.index + 1}</b>
     <div>Expected <code>${mark(d.expected)}</code></div><div>Yours <code>${mark(d.actual)}</code></div>
     ${d.spacingOnly ? '<div class="hint">Only the spacing differs. Spaces inside a line (shown as ·) must match exactly; only trailing spaces are ignored.</div>' : ''}</div>`;
@@ -83,7 +99,7 @@ function testRows(cases, results) {
         <div><h4>Input</h4><pre>${esc(clip(tc.input))}</pre></div>
         <div><h4>Expected</h4><pre>${esc(clip(tc.output))}</pre></div>
         <div><h4>Your output</h4><pre>${esc(clip(r.stdout))}</pre></div>
-      </div>${r.stderr ? `<h4>stderr</h4><pre class="err">${esc(clip(r.stderr))}</pre>` : ''}
+      </div>${r.stderr ? `<h4>stderr</h4><pre class="err">${esc(clipEnd(r.stderr))}</pre>` : ''}
     </details>`;
   }).join('');
 }
@@ -109,7 +125,7 @@ function singleResultHtml(title, input, expected, r) {
       <div><h4>Input</h4><pre>${esc(clip(input))}</pre></div>
       ${expected === undefined ? '' : `<div><h4>Expected</h4><pre>${esc(clip(expected))}</pre></div>`}
       <div><h4>Your output</h4><pre>${esc(clip(r.stdout))}</pre></div>
-    </div>${r.stderr ? `<h4>stderr</h4><pre class="err">${esc(clip(r.stderr))}</pre>` : ''}`);
+    </div>${r.stderr ? `<h4>stderr</h4><pre class="err">${esc(clipEnd(r.stderr))}</pre>` : ''}`);
 }
 
 // A verdict tile of a passed test: the letter P, or a label that says Correct (not "Incorrect"). Same rule as the

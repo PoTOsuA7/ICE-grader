@@ -73,6 +73,12 @@ def data_sandbox(files):
     return d
 
 
+def run_folder(files):
+    """The folder a test runs in: the data sandbox, else a new empty folder, as on the grader. Not Thonny's own
+    working folder, which may be its program folder: a file the program writes would land there (or fail to)."""
+    return data_sandbox(files) or tempfile.mkdtemp(prefix="ice-grader-run-")
+
+
 def map_data_paths(text, files):
     for name in files or {}:
         text = text.replace("/data/" + name, "data/" + data_name(name))
@@ -121,8 +127,9 @@ def run_one(python, file, text, time_limit, cwd=None):
     finally:
         _running.discard(proc)
     ms = int((time.time() - start) * 1000)
+    end = time.time() + 1.5
     for t in readers:
-        t.join(1.5)  # don't hang if a leftover child keeps the pipes open
+        t.join(max(0, end - time.time()))  # don't hang if a leftover child keeps the pipes open
     if any(t.is_alive() for t in readers):
         kill_tree(proc)
     for t, pipe in zip(readers, (proc.stdout, proc.stderr)):
@@ -132,7 +139,7 @@ def run_one(python, file, text, time_limit, cwd=None):
             pipe.close()
         except OSError:
             pass
-    decode = lambda parts: b"".join(parts).decode("utf-8", "replace").replace("\r\n", "\n")
+    decode = lambda parts: b"".join(list(parts)).decode("utf-8", "replace").replace("\r\n", "\n")
     return {"stdout": decode(out), "stderr": decode(err), "code": proc.returncode, "timed_out": timed_out, "ms": ms}
 
 
@@ -157,12 +164,11 @@ def run_tests(python, file, cases, time_limit=DEFAULT_TIME_LIMIT, on_result=None
         if tc.get("partial_input"):
             r = {"verdict": "SKIP", "skipped": "input", "ms": 0, "stdout": "", "stderr": ""}
         else:
-            box = data_sandbox(tc.get("files"))
+            box = run_folder(tc.get("files"))
             try:
                 run = run_one(python, file, map_data_paths(tc["input"], tc.get("files")), time_limit, box)
             finally:
-                if box:
-                    _remove_dir(box)
+                _remove_dir(box)
             cmp = compared_outputs(tc, run["stdout"])
             if run["timed_out"]:
                 verdict = "TLE"

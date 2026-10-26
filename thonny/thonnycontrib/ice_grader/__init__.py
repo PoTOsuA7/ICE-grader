@@ -18,7 +18,7 @@ from tkinter import font as tkfont
 from .ai import DEFAULT_MODEL, FALLBACK_MODEL, AIError, build_prompt, call_gemini
 from .client import GraderError, SessionExpired, tile_passed
 from .clipboard import copy_file
-from .core import DEFAULT_ROOT, Core, NotSignedIn
+from .core import DEFAULT_ROOT, Core, NotSignedIn, read_source
 from .diff import checked_part, compared_outputs, first_difference, visible
 from .layout import chapter_of, safe_name, solution_path
 from .statement import StatementView, can_show_pdfs
@@ -30,11 +30,13 @@ EXPORT_PREFIX = "ice-grader-export-"
 GEMINI_SECRET = "gemini"
 COLORS = {"PASS": "#2ea043", "FAIL": "#e5534b", "RE": "#e5534b", "TLE": "#d29922", "SKIP": "#8b949e"}
 FAILED = ("FAIL", "RE", "TLE")
+MAX_LINE = 300  # characters of one line of output shown in the Test Results panel
 
 _core = None
 _tasks = queue.Queue()
 _busy = set()  # what is running now: "tests", "submit", "download", "ai", ...
 _last_run = None  # the latest test run, for Explain: {problem, filename, code, cases, results}
+_rerun = None  # a file saved while its tests ran: (filename, problem), run again once they finish
 _session_gemini_key = None  # when the computer has no password store
 
 
@@ -518,9 +520,12 @@ def cmd_link_file(p=None):
 def run_tests_for(filename, p, show=True):
     """Runs the problem's tests on the file. show=False (on save): the results are filled in without switching to
     the Test Results tab, so the Shell stays in front, and the Grader panel shows the score."""
+    global _rerun
     if "tests" in _busy:  # e.g. Run tests saved the file, which started a run already: show that one
         if show:
             _results()
+        else:  # saved while its tests run: run them again on the newest code afterwards
+            _rerun = (filename, p)
         return
     if not p.get("has_testcases", True):
         if show:
@@ -529,9 +534,8 @@ def run_tests_for(filename, p, show=True):
     view = _results(show)
     view.start(p, filename, show or "submit" not in _busy)  # saving doesn't hide a submission being graded
     try:
-        with open(filename, encoding="utf-8") as f:
-            code = f.read()
-    except OSError:
+        code = read_source(filename)
+    except (OSError, SyntaxError):  # missing, or not readable as text: the run says so
         code = ""
     python, limit = target_python(), float(_wb().get_option("ice_grader.time_limit") or 3)
     panel = _panel()
@@ -550,13 +554,24 @@ def run_tests_for(filename, p, show=True):
         summary, tag = view.finish(cases, results)
         if panel:
             panel.set_last("%s: %s" % (p["code"], summary), COLORS[tag])
+        later(_run_queued)  # after this run is no longer busy
 
     def failed(e):
+        global _rerun
+        _rerun = None  # it would only fail the same way (not signed in, Python not found, ...)
         if panel:
             panel.set_last("")
         view.failed(_error_text(e))
         _show_error(e) if show or isinstance(e, (NotSignedIn, SessionExpired)) else None
     in_background(work, done, "tests", failed)
+
+
+def _run_queued():
+    """The run for a file saved while its tests ran."""
+    global _rerun
+    queued, _rerun = _rerun, None
+    if queued:
+        run_tests_for(*queued, show=False)
 
 
 def cmd_run_tests():
@@ -649,8 +664,10 @@ def cmd_submit():
     if not messagebox.askyesno("ICE Grader", "Submit %s to the grader for %s?\n\nThis is a real submission on your account."
                                % (os.path.basename(filename), p["code"]), master=_wb()):
         return
-    with open(filename, encoding="utf-8") as f:
-        source = f.read()
+    try:
+        source = read_source(filename)
+    except (OSError, SyntaxError) as e:
+        return _info("Couldn't read %s: %s" % (os.path.basename(filename), e))
     view = _results()
     view.start_submit(p, filename)
 
@@ -899,7 +916,7 @@ class GraderResultsView(ttk.Frame):
         elif verdict == "RE":
             err = r["stderr"].strip().splitlines()
             self.write("  Crashed:\n", "FAIL")
-            self.write("".join("    %s\n" % line for line in err[-6:]) or "    (no error message)\n")
+            self.write("".join("    %s\n" % clip_line(line) for line in err[-6:]) or "    (no error message)\n")
         if verdict in FAILED:
             self.write("  Input:\n", "dim")
             self.write(_indent(tc["input"], 12))
@@ -999,23 +1016,36 @@ def _natural(s):
     return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", s)]
 
 
+def clip_line(line, start=0, show=str):
+    """show(line), or for a long line show() of MAX_LINE characters of it from start, saying outside it what was left
+    out. Tk takes minutes to hours to lay out a line of a million characters (print("x" * 10**6, end="")), and
+    nobody reads one."""
+    if len(line) <= MAX_LINE:
+        return show(line)
+    start = max(0, min(start, len(line) - MAX_LINE))
+    end = start + MAX_LINE
+    return "%s%s%s" % ("(%d characters) ... " % start if start else "", show(line[start:end]),
+                       " ... (%d more characters)" % (len(line) - end) if end < len(line) else "")
+
+
 def _indent(s, max_lines):
     lines = s.rstrip("\n").split("\n")
     shown = lines[:max_lines]
     more = "    ... %d more lines\n" % (len(lines) - max_lines) if len(lines) > max_lines else ""
-    return "".join("    %s\n" % line for line in shown) + more
+    return "".join("    %s\n" % clip_line(line) for line in shown) + more
 
 
 def _explain(d):
     if d["kind"] == "missing":
-        return "Line %d is missing: expected %r" % (d["line"], d["expected"])
+        return "Line %d is missing: expected %s" % (d["line"], clip_line(d["expected"], show=repr))
     if d["kind"] == "extra":
-        return "Line %d is extra: you printed %r" % (d["line"], d["actual"])
+        return "Line %d is extra: you printed %s" % (d["line"], clip_line(d["actual"], show=repr))
+    start = d["index"] - 20  # a long line: from a little before the difference
     if d["spacing_only"]:
         return "Line %d differs only in spaces: expected %s, you printed %s" % (
-            d["line"], visible(d["expected"]), visible(d["actual"]))
-    return "Line %d differs at column %d: expected %r, you printed %r" % (
-        d["line"], d["index"] + 1, d["expected"], d["actual"])
+            d["line"], clip_line(d["expected"], start, visible), clip_line(d["actual"], start, visible))
+    return "Line %d differs at column %d: expected %s, you printed %s" % (
+        d["line"], d["index"] + 1, clip_line(d["expected"], start, repr), clip_line(d["actual"], start, repr))
 
 
 # ---------------------------------------------------------------- plug-in entry point

@@ -88,6 +88,33 @@ class Runner(unittest.TestCase):
         time.sleep(1)
         self.assertEqual(os.path.getsize(beat), size, "the tested program is still running")
 
+    def test_a_program_that_leaves_something_running_with_its_output_open_does_not_hang_the_run(self):
+        # e.g. os.system("start /b ..."): the program ends, what it started keeps its output pipe open
+        stop = os.path.join(self.dir, "stop")
+        # (the child leaves the test's folder, so that can be removed)
+        child = "import os, tempfile, time\nos.chdir(tempfile.gettempdir())\nfor _ in range(300):\n" \
+                "    if os.path.exists(%r): break\n    time.sleep(0.1)\n" % stop
+        code = "import subprocess, sys\nprint(3)\nsys.stdout.flush()\n" \
+               "subprocess.Popen([sys.executable, '-c', %r], stdout=sys.stdout, stderr=sys.stderr)\n" % child
+        start = time.time()
+        try:
+            results = run_tests(sys.executable, self.program(code), [{"input": "", "output": "3\n"}] * 2, 10)
+        finally:
+            open(stop, "w").close()  # the left-over children end
+            time.sleep(0.5)
+        self.assertEqual([r["verdict"] for r in results], ["PASS", "PASS"])
+        self.assertLess(time.time() - start, 12)
+
+    def test_a_program_runs_in_a_new_empty_folder_not_in_thonnys_working_folder(self):
+        # a program that writes a file must not write it into Thonny's folder, or fail because it can't
+        results = run_tests(sys.executable, self.program("import os\nprint(os.getcwd())\nprint(os.listdir('.'))\n"),
+                            [{"input": "", "output": ""}], 10)
+        cwd, listing = results[0]["stdout"].split("\n")[:2]
+        self.assertNotEqual(os.path.normcase(cwd), os.path.normcase(os.getcwd()))
+        self.assertNotEqual(os.path.normcase(cwd), os.path.normcase(self.dir))
+        self.assertEqual(listing, "[]")
+        self.assertFalse(os.path.exists(cwd))
+
     def test_output_on_stderr_and_a_lot_of_output(self):
         results = run_tests(sys.executable, self.program("import sys\nprint('x' * 3000000)\nprint('oops', file=sys.stderr)\n"),
                             [{"input": "", "output": "x"}], 10)

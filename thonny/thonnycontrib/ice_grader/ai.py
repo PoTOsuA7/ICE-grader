@@ -53,6 +53,11 @@ def _clip(s):
     return s[:MAX_FIELD] + "\n... (truncated)" if len(s) > MAX_FIELD else s
 
 
+def _clip_end(s):
+    """Python prints the error at the end of stderr: a long one keeps its end."""
+    return "(truncated) ...\n" + s[-MAX_FIELD:] if len(s) > MAX_FIELD else s
+
+
 def _hide_paths(s):
     """Python's error messages name each file by its full path, which has the computer's user name in it: send only
     the file's own name."""
@@ -75,7 +80,7 @@ def describe_failure(f):
             lines.append("(First difference from expected: %s)" % where)
     lines += ["Actual output:", "```", _clip(f.get("actual") or "(no output)"), "```"]
     if f.get("stderr"):
-        lines += ["stderr:", "```", _clip(_hide_paths(f["stderr"])), "```"]
+        lines += ["stderr:", "```", _clip_end(_hide_paths(f["stderr"])), "```"]
     if f["verdict"] == "TLE":
         lines.append("(Did not finish within the time limit - suspect an infinite loop or a too-slow algorithm.)")
     return "\n".join(lines)

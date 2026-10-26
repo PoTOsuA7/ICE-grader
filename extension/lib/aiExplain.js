@@ -29,6 +29,8 @@ function withoutCode(text) {
 }
 
 const clip = (s) => (s.length > MAX_FIELD ? s.slice(0, MAX_FIELD) + '\n... (truncated)' : s);
+// Python prints the error at the end of stderr: a long one keeps its end.
+const clipEnd = (s) => (s.length > MAX_FIELD ? '(truncated) ...\n' + s.slice(-MAX_FIELD) : s);
 
 // Python's error messages name each file by its full path, which has the computer's user name in it: send only the
 // file's own name.
@@ -47,7 +49,7 @@ function describeFailure({ n, testInput, expected, partialOutput, actual, stderr
     if (d) lines.push(`(First difference from expected: ${d.kind === 'differs' ? `line ${d.line}, column ${d.index + 1}` : `line ${d.line} (${d.kind} line)`})`);
   }
   lines.push('Actual output:', '```', clip(actual || '(no output)'), '```');
-  if (stderr) lines.push('stderr:', '```', clip(hidePaths(stderr)), '```');
+  if (stderr) lines.push('stderr:', '```', clipEnd(hidePaths(stderr)), '```');
   if (verdict === 'TLE') lines.push('(Did not finish within the time limit - suspect an infinite loop or a too-slow algorithm.)');
   return lines.join('\n');
 }

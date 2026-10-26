@@ -53,6 +53,19 @@ test('a timeout also kills processes the solution started', async (t) => {
   assert.strictEqual(fs.readFileSync(beat, 'utf8'), a, 'grandchild process is still running after the timeout');
 });
 
+test('a program runs in a new empty folder, not in VS Code\'s working folder (its program folder on Windows)', async (t) => {
+  if (!(await havePython(t))) return;
+  // a program that writes a file must not write it there, or fail because it can't
+  const f = write('where.py', 'import os\nprint(os.getcwd())\nprint(os.listdir("."))\n');
+  for (const r of [(await runTests(f, [{ input: '', output: '' }], cfg))[0], await runSingle(f, '', cfg)]) {
+    const [cwd, listing] = r.stdout.trim().split(/\r?\n/);
+    assert.notStrictEqual(path.resolve(cwd), path.resolve(process.cwd()));
+    assert.notStrictEqual(path.resolve(cwd), dir);
+    assert.strictEqual(listing, '[]');
+    assert.ok(!fs.existsSync(cwd), 'the folder is removed after the run');
+  }
+});
+
 test('unsupported file type gives a clear error', async () => {
   await assert.rejects(() => runTests(write('x.rs', ''), cases, cfg), /Unsupported file type/);
 });
