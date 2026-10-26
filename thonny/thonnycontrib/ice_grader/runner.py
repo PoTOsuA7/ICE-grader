@@ -1,4 +1,5 @@
 """Runs a Python solution against grader test cases. A port of the VS Code extension's lib/runner.js."""
+import atexit
 import os
 import shutil
 import subprocess
@@ -12,6 +13,14 @@ from .diff import compared_outputs, normalize
 MAX_OUTPUT = 1 << 20  # stop collecting after 1 MiB so an infinite printer can't eat memory
 DEFAULT_TIME_LIMIT = 3.0
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # Thonny itself has no console: don't flash one up
+_running = set()  # programs being tested now
+
+
+@atexit.register
+def _stop_running():
+    """Thonny is closing: an endless loop being tested must not keep running after it."""
+    for proc in list(_running):
+        kill_tree(proc)
 
 
 def _remove_dir(d):
@@ -73,7 +82,7 @@ def map_data_paths(text, files):
 def _reader(stream, sink):
     size = 0
     while True:
-        chunk = stream.read(65536)
+        chunk = stream.read1(65536)  # what has come so far: read() would wait for 64 KB or the end
         if not chunk:
             break
         if size < MAX_OUTPUT:
@@ -102,18 +111,23 @@ def run_one(python, file, text, time_limit, cwd=None):
 
     threading.Thread(target=feed, daemon=True).start()
     timed_out = False
+    _running.add(proc)
     try:
         proc.wait(timeout=time_limit)
     except subprocess.TimeoutExpired:
         timed_out = True
         kill_tree(proc)
         proc.wait()
+    finally:
+        _running.discard(proc)
     ms = int((time.time() - start) * 1000)
     for t in readers:
         t.join(1.5)  # don't hang if a leftover child keeps the pipes open
     if any(t.is_alive() for t in readers):
         kill_tree(proc)
-    for pipe in (proc.stdout, proc.stderr):
+    for t, pipe in zip(readers, (proc.stdout, proc.stderr)):
+        if t.is_alive():
+            continue  # closing it would wait for the reader, i.e. for the leftover child to end
         try:
             pipe.close()
         except OSError:

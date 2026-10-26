@@ -3,6 +3,7 @@ import os
 import pathlib
 import subprocess
 import sys
+import tempfile
 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -22,12 +23,16 @@ def copy_file(path, platform=sys.platform, run=subprocess.run):
     path = os.path.abspath(path)
     cmd, tool = copy_command(platform)
     env = dict(os.environ, ICE_FILE=path, ICE_URI=pathlib.Path(path).as_uri())
-    try:
-        r = run(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=20, creationflags=_NO_WINDOW)
-    except FileNotFoundError:
-        raise OSError("%s is not installed" % tool)
-    except subprocess.TimeoutExpired:
-        raise OSError("%s did not answer" % tool)
-    err = (r.stderr or b"").decode("utf-8", "replace").strip()
+    # Its messages go to a file, not a pipe: xclip and wl-copy leave a process behind (it hands the file to whoever
+    # pastes) that keeps them open, and reading a pipe would wait for that process to end.
+    with tempfile.TemporaryFile() as messages:
+        try:
+            r = run(cmd, env=env, stdout=subprocess.DEVNULL, stderr=messages, timeout=20, creationflags=_NO_WINDOW)
+        except FileNotFoundError:
+            raise OSError("%s is not installed" % tool)
+        except subprocess.TimeoutExpired:
+            raise OSError("%s did not answer" % tool)
+        messages.seek(0)
+        err = messages.read().decode("utf-8", "replace").strip()
     if r.returncode != 0:
         raise OSError(err.splitlines()[-1] if err else "%s failed (%d)" % (tool, r.returncode))

@@ -349,7 +349,11 @@ def cmd_refresh():
     view = _panel()
     if view:
         view.set_status("Refreshing...")
-    in_background(lambda: core().refresh_problems(), lambda _: _refresh_panel(), "refresh")
+
+    def failed(e):
+        _refresh_panel()
+        _show_error(e)
+    in_background(lambda: core().refresh_problems(), lambda _: _refresh_panel(), "refresh", failed)
 
 
 # ---------------------------------------------------------------- statements
@@ -361,9 +365,22 @@ def show_statement(p):
         return
     _wb().show_view("StatementView", set_focus=False)
     view = _wb().get_view("StatementView")
+    if view.loading == p["id"]:  # on its way already
+        return
+    view.loading = p["id"]
     view.title.configure(text="%s - loading..." % p["code"])
-    in_background(lambda: core().statement_path(p), lambda path: view.show(p, path),
-                  failed=lambda e: (view.title.configure(text=p["code"]), _show_error(e)))
+
+    def done(path):
+        if view.loading == p["id"]:  # not if another statement was asked for since
+            view.loading = None
+            view.show(p, path)
+
+    def failed(e):
+        if view.loading == p["id"]:
+            view.loading = None
+            view.title.configure(text=p["code"])
+            _show_error(e)
+    in_background(lambda: core().statement_path(p), done, failed=failed)
 
 
 def cmd_open_statement():
@@ -417,7 +434,7 @@ def cmd_save_statement(p):
 def _on_editor_changed(event=None):
     """Switching to another solution file shows its statement, if the Statement panel is open."""
     view = _view("StatementView")
-    if not _visible(view):
+    if not _visible(view) or not can_show_pdfs():  # (else each switch would open the PDF app)
         return
     editor = _wb().get_editor_notebook().get_current_editor()
     filename = editor.get_filename() if editor else None
@@ -475,8 +492,10 @@ def cmd_open_solution(p):
 
 
 def cmd_change_folder():
+    old = _wb().get_option("ice_grader.solutions_dir")
     _wb().set_option("ice_grader.solutions_dir", "")
-    solutions_dir()
+    if not solutions_dir():
+        _wb().set_option("ice_grader.solutions_dir", old)  # cancelled: keep the one there was
 
 
 def cmd_link_file(p=None):
@@ -508,7 +527,7 @@ def run_tests_for(filename, p, show=True):
             _info("%s has no test cases on the grader. Run it with your own input (F5), then submit it." % p["code"])
         return
     view = _results(show)
-    view.start(p, filename)
+    view.start(p, filename, show or "submit" not in _busy)  # saving doesn't hide a submission being graded
     try:
         with open(filename, encoding="utf-8") as f:
             code = f.read()
@@ -553,12 +572,13 @@ def cmd_toggle_run_on_save():
 
 
 def _on_save(event):
-    if not _wb().get_option("ice_grader.run_on_save"):
+    """Save, and Save as. Thonny sends these before it writes the file, so the tests start once it is written."""
+    if not _wb().get_option("ice_grader.run_on_save") or getattr(event, "save_copy", False):
         return
     filename = getattr(event, "filename", None)
     p = core().problem_for_file(filename) if filename else None
     if p and p.get("has_testcases", True):
-        run_tests_for(filename, p, show=False)
+        later(run_tests_for, filename, p, False)
 
 
 # ---------------------------------------------------------------- AI explain
@@ -709,13 +729,14 @@ class GraderView(ttk.Frame):
         middle = ttk.Frame(self)
         middle.pack(fill="both", expand=True)
         self.tree = ttk.Treeview(middle, columns=("status",), show="tree", selectmode="browse")
-        # small widths that stretch: a wide first column would push the status column out of sight
-        self.tree.column("#0", width=110, minwidth=60, stretch=True)
-        self.tree.column("status", width=56, minwidth=40, stretch=False, anchor="e")
+        # small widths that stretch: a wide first column would push the status column out of sight (the tree widens
+        # a column that stretches, but never narrows it below where it started)
+        self.tree.column("#0", width=60, minwidth=60, stretch=True)
+        self.tree.column("status", width=44, minwidth=40, stretch=False, anchor="e")
         bar = ttk.Scrollbar(middle, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")  # first: in a narrow panel the tree would leave it no room
         self.tree.pack(side="left", fill="both", expand=True)
-        bar.pack(side="right", fill="y")
         self.tree.bind("<Double-1>", self._open_selected)
         self.tree.bind("<Return>", self._open_selected)
         self.tree.bind("<Button-3>", self._context_menu)
@@ -832,6 +853,8 @@ class GraderResultsView(ttk.Frame):
         self.text.tag_configure("title", font=bold)
         self.text.tag_configure("dim", foreground="#8b949e")
         self.total = 0
+        self.passed = 0
+        self.showing = None  # "tests" or "submit": the one started last has the panel, the other doesn't write in it
         self.write("Run tests (the button in the Grader panel, or save your file) to see the results here.\n", "dim")
 
     def clear(self):
@@ -841,7 +864,12 @@ class GraderResultsView(ttk.Frame):
         self.text.direct_insert("end", s, tags)
         self.text.see("end")
 
-    def start(self, p, filename):
+    def start(self, p, filename, take_panel=True):
+        """take_panel=False: tests started by saving while a submission is being graded, only counted"""
+        self.passed = 0
+        if not take_panel:
+            return
+        self.showing = "tests"
         self.clear()
         self.explain_button.configure(state="disabled")
         self.hint.configure(text="")
@@ -852,6 +880,10 @@ class GraderResultsView(ttk.Frame):
 
     def add(self, i, tc, r):
         verdict = r["verdict"]
+        if verdict == "PASS":
+            self.passed += 1
+        if self.showing != "tests":  # a submission started since
+            return
         self.write("\nTest %d of %d  " % (i + 1, self.total))
         self.write(verdict, verdict)
         # a test whose input can't run here has no time
@@ -888,6 +920,8 @@ class GraderResultsView(ttk.Frame):
         """The summary goes at the top, under the title, and the view scrolls back up to it. -> (summary, tag)"""
         failing = sum(1 for r in results if r["verdict"] in FAILED)
         summary, tag = summary_text(results)
+        if self.showing != "tests":
+            return summary, tag
         self.text.direct_insert("2.0", summary + "\n", (tag, "title"))
         self.text.see("1.0")
         if failing:
@@ -896,7 +930,8 @@ class GraderResultsView(ttk.Frame):
         return summary, tag
 
     def failed(self, text):
-        self.write("\n" + text + "\n", "FAIL")
+        if self.showing == "tests":
+            self.write("\n" + text + "\n", "FAIL")
 
     def explaining(self, shown, total):
         self.explain_button.configure(state="disabled")
@@ -913,16 +948,21 @@ class GraderResultsView(ttk.Frame):
         self.write("\n" + text + "\n", "FAIL")
 
     def start_submit(self, p, filename):
+        self.showing = "submit"
         self.clear()
         self.explain_button.configure(state="disabled")
         self.hint.configure(text="")
         self.write("%s - submitting %s...\n" % (p["code"], os.path.basename(filename)), "title")
 
     def grading(self, r):
+        if self.showing != "submit":  # tests started since
+            return
         self.clear()
         self.write("Grading... %s\n" % (r["status"] or ""), "dim")
 
     def graded(self, r):
+        if self.showing != "submit":
+            return
         self.clear()
         if r["points"] is not None:
             tag = "PASS" if r["points"] == r["max"] else "FAIL"
@@ -1020,6 +1060,7 @@ def load_plugin():
         wb.add_command("ice_grader_run_on_save", MENU, "Run tests when saving", cmd_toggle_run_on_save,
                        flag_name="ice_grader.run_on_save", group=20)
         wb.bind("Save", _on_save, True)
+        wb.bind("SaveAs", _on_save, True)  # a new file's first save
         wb.after(100, _poll)
         wb.after(500, _after_start)
     except Exception:  # noqa: BLE001
