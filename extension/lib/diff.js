@@ -24,7 +24,8 @@ function firstDifference(expected, actual) {
     const ac = Array.from(a[i]);
     let index = 0;
     while (index < ec.length && index < ac.length && ec[index] === ac[index]) index++;
-    const collapse = (s) => s.replace(/\s+/g, ' ').trim();
+    // spaces and tabs only: a form feed (os.system("cls")) or NUL is no spacing mistake
+    const collapse = (s) => s.replace(/[ \t]+/g, ' ').replace(/^ | $/g, '');
     return {
       line: i + 1, kind: 'differs', expected: e[i], actual: a[i], index,
       spacingOnly: collapse(e[i]) === collapse(a[i]),
@@ -33,8 +34,10 @@ function firstDifference(expected, actual) {
   return null;
 }
 
-// Make whitespace visible so "Hello  Python." vs "Hello Python." can be seen.
-const visible = (s) => s.replace(/ /g, '·').replace(/\t/g, '→').replace(/\r/g, '␍');
+// Make whitespace visible so "Hello  Python." vs "Hello Python." can be seen, and other control characters (the
+// form feed os.system("cls") prints, NUL, ESC, ...) as their symbols: ␌ ␀ ␛.
+const visible = (s) => s.replace(/ /g, '·').replace(/\t/g, '→')
+  .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, (c) => (c === '\x7f' ? '␡' : String.fromCharCode(0x2400 + c.charCodeAt(0))));
 
 // The part of a cut-off expected output that can be checked: its complete lines, and the start of the last line,
 // which may be cut mid-way. The 2 KB cut can split a multi-byte character (Thai, ...), leaving one or more "�":

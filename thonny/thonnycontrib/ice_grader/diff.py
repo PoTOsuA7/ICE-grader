@@ -32,8 +32,8 @@ def first_difference(expected, actual):
         while index < len(ei) and index < len(ai) and ei[index] == ai[index]:
             index += 1
 
-        def collapse(s):
-            return re.sub(r"\s+", " ", s).strip()
+        def collapse(s):  # spaces and tabs only: a form feed (os.system("cls")) or NUL is no spacing mistake
+            return re.sub(r"[ \t]+", " ", s).strip(" ")
 
         return {"line": i + 1, "kind": "differs", "expected": ei, "actual": ai, "index": index,
                 "spacing_only": collapse(ei) == collapse(ai)}
@@ -41,8 +41,10 @@ def first_difference(expected, actual):
 
 
 def visible(s):
-    """Make whitespace visible so "Hello  Python." vs "Hello Python." can be seen."""
-    return s.replace(" ", "·").replace("\t", "→").replace("\r", "␍")
+    """Make whitespace visible so "Hello  Python." vs "Hello Python." can be seen, and other control characters
+    (the form feed os.system("cls") prints, NUL, ESC, ...) as their symbols: ␌ ␀ ␛."""
+    s = s.replace(" ", "·").replace("\t", "→")
+    return re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", lambda m: "␡" if m.group() == "\x7f" else chr(0x2400 + ord(m.group())), s)
 
 
 def _shown_part(output):

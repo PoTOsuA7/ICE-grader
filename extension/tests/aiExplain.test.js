@@ -51,6 +51,14 @@ test('the API key never follows a redirect to another address', async () => {
   } finally { first.close(); other.close(); }
 });
 
+test('a long stderr keeps its end, where Python puts the error (same as the Thonny plug-in)', () => {
+  const stderr = `${Array.from({ length: 1000 }, (_, i) => `debug ${i}`).join('\n')}\nValueError: the real error\n`;
+  const prompt = buildPrompt({ code: 'x', language: 'py', failures: [fail(1, { verdict: 'RE', stderr })] });
+  assert.match(prompt, /stderr:\n```\n\(truncated\) \.\.\.\n/);
+  assert.match(prompt, /ValueError: the real error/);
+  assert.doesNotMatch(prompt, /debug 0\n/);
+});
+
 test('buildPrompt notes a timeout instead of diffing output', () => {
   const prompt = buildPrompt({ code: 'while True: pass', language: 'py', failures: [{ n: 1, testInput: '1\n', actual: '', verdict: 'TLE' }] });
   assert.match(prompt, /Did not finish within the time limit/);

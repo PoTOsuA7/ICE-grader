@@ -69,6 +69,39 @@ test('a test the grader calls "Incorrect" gets a red tile, not a green one', () 
   assert.match(html, /tile bad" title="Test 2: Incorrect"/);
 });
 
+test('a long stderr shows its end, where Python puts the error', () => {
+  const stderr = `${Array.from({ length: 1000 }, (_, i) => `debug ${i}`).join('\n')}\nValueError: the real error\n`;
+  const r = { verdict: 'RE', ms: 5, stdout: '', stderr };
+  for (const html of [localResultsHtml({ code: 'X' }, [{ input: '1\n', output: '3\n' }], [r]), singleResultHtml('t', '1\n', '3\n', r)]) {
+    assert.ok(html.includes('ValueError: the real error'));
+    assert.ok(html.includes('<pre class="err">(truncated) ... ') && !html.includes('debug 0\n'));
+  }
+});
+
+test('an invisible character in the output is shown, not called a spacing mistake', () => {
+  // os.system("cls") with no console prints a form feed: the two lines looked the same, "only the spacing differs"
+  const html = diffHtml('3', '\f3');
+  assert.ok(html.includes('Yours <code><mark>␌</mark>3</code>'), html);
+  assert.ok(!html.includes('Only the spacing differs'), html);
+});
+
+test('one huge line of output is cut to a readable length, with the difference still shown', () => {
+  // sys.stdout.write("x" * 5_000_000): the runner keeps 1 MiB, which would make the difference box 260,000 px tall
+  const huge = 'x'.repeat(1 << 20);
+  const html = diffHtml('3', huge);
+  assert.ok(html.length < 2000, `${html.length} characters`);
+  assert.ok(html.includes(`<mark>x</mark>${'x'.repeat(299)} ... (${(1 << 20) - 300} more characters)`), html);
+  const far = diffHtml(`${'a'.repeat(5000)}b${'z'.repeat(5000)}`, `${'a'.repeat(5000)}c${'z'.repeat(5000)}`);
+  assert.ok(far.length < 2000 && far.includes('column 5001'), far);
+  assert.ok(far.includes(`(4980 characters) ... ${'a'.repeat(20)}<mark>b</mark>`), far);
+  assert.ok(far.includes(`${'a'.repeat(20)}<mark>c</mark>${'z'.repeat(279)} ... (4721 more characters)`), far);
+  assert.ok(diffHtml('1', `1\n${'y'.repeat(1 << 20)}`).length < 2000, 'an extra line');
+  assert.ok(diffHtml(`1\n${'y'.repeat(1 << 20)}`, '1').length < 2000, 'a missing line');
+  const end = diffHtml(`${'q'.repeat(400)}1`, 'q'.repeat(400)); // the line ends where it differs
+  assert.ok(end.includes(`(101 characters) ... ${'q'.repeat(299)}<mark>1</mark></code>`), end);
+  assert.ok(end.includes(`(100 characters) ... ${'q'.repeat(300)}<mark>⏎</mark></code>`), end);
+});
+
 test('a difference inside an emoji marks the whole character, not half of it', () => {
   const html = diffHtml('A😀', 'A😁');
   assert.ok(html.includes('column 2'), html);

@@ -47,6 +47,14 @@ class Explain(unittest.TestCase):
         self.assertIn('File "05_List_15.py", line 3, in <module>', prompt)
         self.assertIn('File "x.py", line 1\nZeroDivisionError', prompt)
 
+    def test_a_long_stderr_keeps_its_end_where_python_puts_the_error(self):
+        # the same as the VS Code version
+        stderr = "\n".join("debug %d" % i for i in range(1000)) + "\nValueError: the real error\n"
+        prompt = build_prompt("x", [dict(FAILURE, verdict="RE", stderr=stderr)])
+        self.assertIn("stderr:\n```\n(truncated) ...\n", prompt)
+        self.assertIn("ValueError: the real error", prompt)
+        self.assertNotIn("debug 0\n", prompt)
+
     def test_the_api_key_never_follows_a_redirect_to_another_address(self):
         seen = []
 

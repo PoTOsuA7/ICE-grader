@@ -41,3 +41,11 @@ test('an emoji is one column, and a cut-off line never keeps half an emoji (same
 test('visible marks spaces, tabs and carriage returns', () => {
   assert.strictEqual(visible('a b\tc\r'), 'a·b→c␍');
 });
+
+test('a form feed (os.system("cls")) or other control character is shown, and is no spacing mistake (same as Thonny)', () => {
+  const d = firstDifference('3\n', '\f3\n');
+  assert.strictEqual(d.spacingOnly, false);
+  assert.strictEqual(visible('\f3\x00\x1b[0m\x07\b\x7f'), '␌3␀␛[0m␇␈␡');
+  assert.strictEqual(firstDifference('a \t b', '  a b').spacingOnly, true);
+  assert.strictEqual(firstDifference('a b', 'a b').spacingOnly, false);
+});
