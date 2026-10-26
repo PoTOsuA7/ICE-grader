@@ -192,15 +192,22 @@ function activate(context) {
   // signed in, at most once a minute) and saved, so later runs need no request and it works offline. null: not known.
   const submissionFile = (p) => path.join(problemDir(p.id), 'submission.json');
   const saveSubmission = (p, sub) => {
-    fs.mkdirSync(problemDir(p.id), { recursive: true });
-    fs.writeFileSync(submissionFile(p), JSON.stringify(sub));
+    try {
+      fs.mkdirSync(problemDir(p.id), { recursive: true });
+      fs.writeFileSync(submissionFile(p), JSON.stringify(sub));
+    } catch { /* a cache that can't be written: it is read from the grader again next time */ }
   };
-  const submissionLookups = new Map(); // submission id -> when it was last asked for
-  async function lastSubmission(p) {
+  // The saved one, if it is the latest (no request).
+  function savedSubmission(p) {
     let saved = null;
     try { saved = JSON.parse(fs.readFileSync(submissionFile(p), 'utf8')); } catch { /* none saved yet */ }
     const latest = p.lastSubmissionId;
-    if (saved && (!latest || Number(saved.id) >= Number(latest))) return saved;
+    return saved && (!latest || Number(saved.id) >= Number(latest)) ? saved : null;
+  }
+  const submissionLookups = new Map(); // submission id -> when it was last asked for
+  // The latest one from the grader, when it isn't saved yet.
+  async function fetchLastSubmission(p) {
+    const latest = p.lastSubmissionId;
     if (!latest || !client || Date.now() - (submissionLookups.get(latest) || 0) < 60000) return null;
     submissionLookups.set(latest, Date.now());
     try {
@@ -663,20 +670,29 @@ function activate(context) {
         throw e;
       }
       // A test that can't be checked here shows the grader's verdict on it from your last submission, if known.
-      if (results.some((r) => r.verdict === 'SKIP')) {
-        const sub = await lastSubmission(p);
-        const code = codeHash(source);
-        results.forEach((r, i) => {
-          const seen = r.verdict === 'SKIP' && lastSubmitOn(sub, i, results.length, code);
-          if (seen) r.lastSubmit = seen;
-        });
-      }
+      const skipped = results.some((r) => r.verdict === 'SKIP');
+      const code = codeHash(source);
+      const markSkipped = (sub) => results.forEach((r, i) => {
+        const seen = r.verdict === 'SKIP' && lastSubmitOn(sub, i, results.length, code);
+        if (seen) r.lastSubmit = seen;
+      });
+      if (skipped) markSkipped(savedSubmission(p));
       const t = tally(results);
       lastRun.set(linkKey(doc.fileName), { problemId: p.id, source, cases, results });
       updateFailureContext();
-      showView(localResultsHtml(p, cases, results), `${p.code}: ${t.passed}/${t.ran}`);
+      const shown = localResultsHtml(p, cases, results);
+      showView(shown, `${p.code}: ${t.passed}/${t.ran}`);
       (t.passed === t.ran ? vscode.window.showInformationMessage : vscode.window.showWarningMessage)(
         `${p.code}: ${t.text.replace('passed', 'tests passed')}`);
+      // Not saved yet: it is read from the grader after the results are shown (a slow grader never holds them up),
+      // and they are shown again with it, if they are still what the view shows.
+      if (skipped && !savedSubmission(p)) {
+        fetchLastSubmission(p).then((sub) => {
+          if (!sub || resultsHtml !== shown) return;
+          markSkipped(sub);
+          showView(localResultsHtml(p, cases, results), `${p.code}: ${t.passed}/${t.ran}`);
+        }, () => {});
+      }
     });
   }
 
