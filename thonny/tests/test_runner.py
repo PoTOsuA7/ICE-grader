@@ -1,11 +1,13 @@
 """Really runs Python programs against tests."""
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
 import unittest
 
+from thonnycontrib.ice_grader import runner
 from thonnycontrib.ice_grader.runner import run_tests
 
 
@@ -48,6 +50,34 @@ class Runner(unittest.TestCase):
         cases = [{"input": "/data/data.txt\n", "output": "6\n", "files": files},
                  {"input": "/data/da", "output": "6\n", "files": files, "partial_input": True}]
         self.assertEqual(self.run_cases(code, cases), ["PASS", "SKIP"])
+
+    def test_a_program_the_solution_leaves_running_does_not_hold_up_the_tests(self):
+        code = "import subprocess, sys\nsubprocess.Popen([sys.executable, '-c', 'import time; time.sleep(7)'])\nprint(5)\n"
+        start = time.time()
+        self.assertEqual(self.run_cases(code, [{"input": "", "output": "5\n"}]), ["PASS"])
+        self.assertLess(time.time() - start, 5.5)
+
+    def test_closing_thonny_stops_the_program_being_tested(self):
+        beat = os.path.join(self.dir, "beat")
+        sol = self.program("import time\nend = time.time() + 15\nwhile time.time() < end:\n"
+                           "    open(%r, 'a').write('.')\n    time.sleep(0.1)\n" % beat)
+        # "Thonny": runs the tests in a worker thread and quits while the program is still running
+        host = "\n".join([
+            "import os, sys, threading, time",
+            "from thonnycontrib.ice_grader.runner import run_tests",
+            "case = {'input': '', 'output': ''}",
+            "threading.Thread(target=run_tests, args=(sys.executable, %r, [case], 30), daemon=True).start()" % sol,
+            "end = time.time() + 10",
+            "while not os.path.exists(%r) and time.time() < end:" % beat,
+            "    time.sleep(0.05)",
+        ])
+        root = os.path.dirname(os.path.dirname(os.path.dirname(runner.__file__)))
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join([root, os.environ.get("PYTHONPATH", "")]))
+        subprocess.run([sys.executable, "-c", host], env=env, timeout=30)
+        time.sleep(0.5)
+        size = os.path.getsize(beat)
+        time.sleep(1)
+        self.assertEqual(os.path.getsize(beat), size, "the tested program is still running")
 
     def test_output_on_stderr_and_a_lot_of_output(self):
         results = run_tests(sys.executable, self.program("import sys\nprint('x' * 3000000)\nprint('oops', file=sys.stderr)\n"),

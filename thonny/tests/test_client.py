@@ -5,9 +5,11 @@ import os
 import shutil
 import tempfile
 import threading
+import time
 import unittest
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest import mock
 
 from thonnycontrib.ice_grader.client import GraderClient, GraderError, SessionExpired
 from thonnycontrib.ice_grader.core import Core, NotSignedIn
@@ -184,10 +186,43 @@ class FakeClient:
         return {"source": "print(1)\n", "language": "Python"}
 
 
+class OneSessionClient:
+    """Signs in like the real grader: it fetches the sign-in page, then posts that page's token. A second sign-in
+    started meanwhile on the same client starts a new session, so the first one's post is refused."""
+    logins = 0
+
+    def __init__(self, root, cookies=None):
+        self.cookies = dict(cookies or {})
+        self.started = 0
+
+    def login(self, uid, password):
+        self.started += 1
+        mine = self.started
+        time.sleep(0.2)
+        if self.started != mine:
+            raise GraderError("Sign-in refused")
+        OneSessionClient.logins += 1
+        self.cookies = {"_session": "new%d" % OneSessionClient.logins}
+
+    def _check(self):
+        if not self.cookies.get("_session", "").startswith("new"):
+            raise SessionExpired("expired")
+
+    def list_problems(self):
+        self._check()
+        return [{"id": "10", "code": "05_List_15", "name": "x", "has_testcases": True, "status": "untried", "score": 0,
+                 "last_submission_id": None}]
+
+    def fetch_testcases(self, pid):
+        self._check()
+        return [{"input": "1\n", "output": "1\n"}]
+
+
 class Saved(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
         FakeClient.calls, FakeClient.down, FakeClient.expired = [], False, False
+        OneSessionClient.logins = 0
 
     def tearDown(self):
         shutil.rmtree(self.dir, ignore_errors=True)
@@ -294,6 +329,79 @@ class Saved(unittest.TestCase):
         self.assertEqual(c.problem_for_file(os.path.join("x", "05_list_15.py"))["id"], "10")
         self.assertEqual(c.problem_for_file("Exam1-2024_Q1A_student.py")["id"], "11")
         self.assertIsNone(c.problem_for_file("homework.py"))
+
+    def test_a_download_cut_short_is_not_taken_for_the_statement(self):
+        c = self.core()
+        c.sign_in("u", "pw")
+        p = c.problems[0]
+        os.makedirs(os.path.join(c.dir, p["id"]))
+        with open(os.path.join(c.dir, p["id"], "statement.pdf.tmp"), "wb") as f:
+            f.write(b"%PD")  # Thonny closed while it was being written
+        self.assertEqual(os.path.basename(c.statement_path(p)), "statement.pdf")
+
+    def test_the_same_files_downloaded_twice_at_once(self):
+        # e.g. opening a problem's file with the Statement panel open, or while Download all runs
+        c = self.core()
+        c.sign_in("u", "pw")
+        p = c.problems[0]
+        real_replace, one_at_a_time = os.replace, threading.Lock()
+        for get, name in ((c.statement_path, "statement.pdf"), (c.tests, "tests.v1.json")):
+            both = threading.Barrier(2, timeout=5)
+
+            def replace(src, dst):
+                if os.path.basename(dst) == name:
+                    try:
+                        both.wait()  # both copies are written before either is moved into place
+                    except threading.BrokenBarrierError:
+                        pass
+                with one_at_a_time:
+                    real_replace(src, dst)
+            results, errors = [], []
+
+            def one():
+                try:
+                    results.append(get(p))
+                except Exception as e:  # noqa: BLE001
+                    errors.append(e)
+            with mock.patch("os.replace", replace):
+                threads = [threading.Thread(target=one) for _ in range(2)]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join(10)
+            self.assertEqual(errors, [])
+            if get == c.tests:
+                self.assertEqual(results, [[{"input": "1\n", "output": "1\n"}]] * 2)
+            else:
+                self.assertEqual([os.path.basename(r) for r in results], [name, name])
+
+    def test_parallel_work_that_finds_the_session_expired_signs_in_again_once(self):
+        store = MemorySecrets()
+        c = Core(self.dir, "https://grader.test/", OneSessionClient, store)
+        c.sign_in("u", "pw")
+        c.client.cookies = {"_session": "old"}  # expired overnight
+        errors = []
+
+        def one(fn):
+            try:
+                fn()
+            except Exception as e:  # noqa: BLE001
+                errors.append(e)
+        threads = [threading.Thread(target=one, args=(fn,)) for fn in
+                   (c.refresh_problems, lambda: c.tests(c.problems[0], refresh=True))]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(10)
+        self.assertEqual(errors, [])
+        self.assertTrue(c.signed_in)
+        self.assertEqual(store.values, {"grader:grader.test:u": "pw"})
+        self.assertEqual(OneSessionClient.logins, 2)  # the first sign-in, then one more
+
+    def test_a_grader_address_with_a_port_still_gets_a_data_folder(self):
+        c = Core(self.dir, "http://127.0.0.1:8000/", FakeClient, MemorySecrets())
+        self.assertNotIn(":", os.path.basename(c.dir))  # Windows can't have ":" in a folder name
+        self.assertTrue(os.path.isdir(c.dir))
 
     def test_export_all(self):
         c = self.core()

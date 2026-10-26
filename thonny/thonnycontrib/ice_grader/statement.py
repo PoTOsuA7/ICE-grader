@@ -98,6 +98,7 @@ class StatementView(ttk.Frame):
         from . import statement_copy, statement_open, statement_save  # the plug-in's commands
         self.problem = None
         self.path = None
+        self.loading = None  # the id of the problem whose statement is being fetched
         self.zoom = 1.0
         self.images = []
         self.boxes = []  # where each page is drawn: (x, y, w, h)
@@ -119,9 +120,13 @@ class StatementView(ttk.Frame):
         self.zoom_label.pack(side="left")
         self.zoom_label.bind("<Button-1>", lambda e: self.set_zoom(1.0))
         ttk.Button(buttons, text="+", width=3, command=lambda: self.set_zoom(self.zoom * 1.2)).pack(side="left")
+        # A row of their own, as narrow as their words: Thonny's side panels start 15 em wide, too narrow for all six.
+        actions = ttk.Frame(self, padding=(6, 0, 6, 2))
+        actions.pack(fill="x")
         for text, command in (("Copy", lambda: statement_copy(self)), ("Save", lambda: statement_save(self)),
                               ("Open", lambda: statement_open(self))):
-            ttk.Button(buttons, text=text, command=command).pack(side="left", padx=(4, 0), fill="x", expand=True)
+            button = ttk.Button(actions, text=text, width=0, command=command)
+            button.pack(side="left", padx=(0 if text == "Copy" else 4, 0), fill="x", expand=True)
         self.note = ttk.Label(self, text="", padding=(8, 0, 6, 2))
         self.note.pack(fill="x")
         self.note.bind("<Configure>", lambda e: self.note.configure(wraplength=max(e.width - 14, 60)))
@@ -199,13 +204,13 @@ class StatementView(ttk.Frame):
         """Draws the pages again (for a new statement, zoom or panel width). A newer render stops an older one."""
         if not self.path:
             return
+        self.generation += 1  # also when nothing is drawn here: an older statement still being drawn is dropped
         width = self.canvas.winfo_width() - 2 * GAP
         if width < 60:  # not on screen yet: drawn when it gets its size (_resized)
             return
         if not self.path.lower().endswith(".pdf"):
             self.message("This statement isn't a PDF. Click Open to read it.")
             return
-        self.generation += 1
         generation, path, zoom, result = self.generation, self.path, self.zoom, {}
 
         def work():

@@ -3,11 +3,21 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
+import tkinter as tk
 import unittest
+from tkinter import font as tkfont
+from tkinter import ttk
+from unittest import mock
 
+from thonnycontrib.ice_grader import statement
 from thonnycontrib.ice_grader.ai import CODE_REMOVED, AIError, build_prompt, call_gemini, without_code
 from thonnycontrib.ice_grader.clipboard import copy_command, copy_file
-from thonnycontrib.ice_grader.statement import GAP, can_show_pdfs, lay_out, position_of, render_pdf, spot_at, wheel_steps
+from thonnycontrib.ice_grader.core import Core
+from thonnycontrib.ice_grader.passwords import MemorySecrets
+from thonnycontrib.ice_grader.statement import (GAP, StatementView, can_show_pdfs, lay_out, position_of, render_pdf,
+                                                spot_at, wheel_steps)
 
 FAILURE = {"n": 2, "verdict": "FAIL", "input": "3\n", "expected": "6\n", "actual": "5\n", "stderr": ""}
 
@@ -87,6 +97,27 @@ class Clipboard(unittest.TestCase):
         cmd, path, uri = seen[0]
         self.assertTrue(path.endswith("a b.pdf") and uri.startswith("file:") and "a%20b.pdf" in uri)
         self.assertNotIn("a b.pdf", " ".join(cmd))
+        odd = os.path.abspath(os.path.join("it's \"$HOME\" & [x] `y` %TEMP%", "โจทย์ 1.pdf"))
+        for platform in ("win32", "darwin", "linux"):
+            seen.clear()
+            copy_file(odd, platform, run)
+            cmd, path, uri = seen[0]
+            self.assertEqual((cmd, path), (copy_command(platform)[0], odd))  # the command never changes
+            self.assertNotIn("โจทย์", uri)  # percent-encoded for the file managers that read it
+
+    @unittest.skipUnless(shutil.which("sh"), "needs sh")
+    def test_a_copy_tool_that_stays_in_the_background_does_not_hold_up_copy(self):
+        # Like xclip: it forks a process that stays to hand the file to whoever pastes, and that process keeps the
+        # output it was given. This stand-in never touches the real clipboard.
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        with open(os.path.join(d, "xclip"), "w", newline="\n") as f:
+            f.write("#!/bin/sh\ncat > /dev/null\n(sleep 4) &\nexit 0\n")
+        os.chmod(os.path.join(d, "xclip"), 0o755)
+        with mock.patch.dict(os.environ, {"PATH": d + os.pathsep + os.environ["PATH"]}):
+            start = time.time()
+            copy_file(os.path.join(d, "x.pdf"), "linux")
+        self.assertLess(time.time() - start, 3)
 
     def test_a_missing_tool_is_named(self):
         def run(cmd, **kw):
@@ -126,6 +157,84 @@ class Statement(unittest.TestCase):
         pdf.close()
         self.assertEqual([(w, h) for w, h, _ in render_pdf(self.path + "2", 300)], [(300, 400), (300, 400), (150, 200)])
         self.assertIsNone(render_pdf(self.path, 300, stale=lambda: True))
+
+
+class StatementPanel(unittest.TestCase):
+    """The real panel, in a window that is never shown."""
+
+    def setUp(self):
+        try:
+            self.root = tk.Tk()
+        except tk.TclError:
+            self.skipTest("no display")
+        self.root.withdraw()
+        self.view = StatementView(self.root)
+        self.view.canvas.winfo_width = lambda: 400  # as if it were on screen
+        self.view.canvas.winfo_height = lambda: 300
+
+    def tearDown(self):
+        self.root.destroy()
+
+    def test_a_pdf_still_being_drawn_does_not_cover_a_statement_opened_since(self):
+        go = threading.Event()
+
+        def slow_render(path, width, zoom=1.0, stale=lambda: False):
+            go.wait(5)
+            return None if stale() else [(2, 2, b"P6\n2 2\n255\n" + bytes(12))]
+        with mock.patch.object(statement, "render_pdf", slow_render):
+            self.view.show({"id": "1", "code": "A_1"}, os.path.join("a", "statement.pdf"))
+            self.view.show({"id": "2", "code": "B_2"}, os.path.join("b", "statement.html"))
+            go.set()
+            end = time.time() + 1
+            while time.time() < end:
+                self.root.update()
+        self.assertEqual([self.view.canvas.type(i) for i in self.view.canvas.find_all()], ["text"])  # the "not a PDF" note
+
+
+class NarrowPanels(unittest.TestCase):
+    """Thonny makes side panels 15 em wide (about 150 pixels): every button, the list's scroll bar and its status
+    column must show."""
+
+    def setUp(self):
+        try:
+            self.root = tk.Tk()
+        except tk.TclError:
+            self.skipTest("no display")
+        ttk.Style(self.root).theme_use("clam")  # what Thonny's own themes build on
+        self.width = 15 * tkfont.nametofont("TkDefaultFont").measure("m")  # like Thonny's ems_to_pixels(15)
+        self.root.geometry("%dx420-3000-3000" % self.width)  # on screen for Tk, but out of sight
+        self.root.attributes("-alpha", 0.0)
+
+    def tearDown(self):
+        self.root.destroy()
+
+    def shown(self, widget):
+        widget.pack(fill="both", expand=True)
+        self.root.update()
+        widgets, todo = [], [widget]
+        while todo:
+            w = todo.pop()
+            widgets.append(w)
+            todo.extend(w.winfo_children())
+        return widgets
+
+    def test_every_statement_button_shows(self):
+        buttons = [w for w in self.shown(StatementView(self.root)) if w.winfo_class() == "TButton"]
+        self.assertEqual(len(buttons), 5)
+        right = self.root.winfo_rootx() + self.width
+        for b in buttons:
+            self.assertTrue(b.winfo_ismapped() and b.winfo_rootx() + b.winfo_width() <= right, b.cget("text"))
+
+    def test_the_problem_list_shows_its_scroll_bar_and_status_column(self):
+        import thonnycontrib.ice_grader as ig
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        with mock.patch.object(ig, "_core", Core(d, "https://grader.test/", secrets=MemorySecrets())):
+            view = ig.GraderView(self.root)
+        bars = [w for w in self.shown(view) if w.winfo_class() == "TScrollbar"]
+        self.assertTrue(bars[0].winfo_ismapped() and bars[0].winfo_width() > 5)
+        tree = view.tree  # the tree doesn't narrow its columns to fit: they must start narrow enough
+        self.assertLessEqual(tree.column("#0", "width") + tree.column("status", "width"), tree.winfo_width())
 
 
 class Zoom(unittest.TestCase):

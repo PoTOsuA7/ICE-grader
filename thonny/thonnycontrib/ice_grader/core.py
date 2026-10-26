@@ -22,15 +22,22 @@ class NotSignedIn(GraderError):
     pass
 
 
+def _tmp_name(path):
+    """Where to write path before moving it into place: one per thread, as two threads may fetch the same file."""
+    return "%s.%d.tmp" % (path, threading.get_ident())
+
+
 class Core:
     def __init__(self, data_dir, root_url=DEFAULT_ROOT, client_class=GraderClient, secrets=None):
         self.root = root_url
         self.host = urllib.parse.urlsplit(root_url).netloc or "grader"
-        self.dir = os.path.join(data_dir, self.host)
+        self.dir = os.path.join(data_dir, safe_name(self.host))  # "host:8000" is no folder name on Windows
         os.makedirs(self.dir, exist_ok=True)
         self._client_class = client_class
         self.secrets = secrets or KeyringSecrets()
         self._lock = threading.RLock()
+        self._signing_in = threading.Lock()  # one sign-in at a time: a second one would spoil the first's session
+        self._sign_ins = 0  # how many so far, to tell whether another thread already signed in again
         self._password = None  # this session's copy; the saved one is in the computer's password store
         self.remembered = False  # whether the password store kept it
         session = self._read_json("session.json") or {}
@@ -53,7 +60,7 @@ class Core:
 
     def _write_json(self, value, *parts):
         os.makedirs(os.path.dirname(self._path(*parts)), exist_ok=True)
-        tmp = self._path(*parts) + ".tmp"
+        tmp = _tmp_name(self._path(*parts))
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(value, f)
         os.replace(tmp, self._path(*parts))
@@ -77,6 +84,7 @@ class Core:
             if self.uid and self.uid != uid:
                 self.secrets.delete(self._secret_name())
             self.client, self.uid, self._password = client, uid, password
+            self._sign_ins += 1
             self._save_session()
             self.remembered = self.secrets.set(self._secret_name(), password)
         return self.refresh_problems()
@@ -95,19 +103,26 @@ class Core:
         """fn(client), signing in again once with the remembered password if the grader's session ran out."""
         if not self.client:
             raise NotSignedIn("Sign in to the grader first.")
+        sign_ins = self._sign_ins
         try:
             result = fn(self.client)
         except SessionExpired:
-            password = self._password or self.secrets.get(self._secret_name())
-            if not password:
-                self.sign_out()
-                raise
-            try:
-                self.client.login(self.uid, password)
-            except GraderError:  # the password was changed on the grader
-                self.sign_out()
-                raise SessionExpired("The grader signed you out and your saved password no longer works - sign in again.")
-            self._password = password
+            with self._signing_in:  # other work that found the session expired too waits here, then just retries
+                if self._sign_ins == sign_ins:
+                    password = self._password or self.secrets.get(self._secret_name())
+                    if not password or not self.client:
+                        self.sign_out()
+                        raise
+                    try:
+                        self.client.login(self.uid, password)
+                    except GraderError:  # the password was changed on the grader
+                        self.sign_out()
+                        raise SessionExpired("The grader signed you out and your saved password no longer works - "
+                                             "sign in again.")
+                    self._password = password
+                    self._sign_ins += 1
+            if not self.client:
+                raise NotSignedIn("Sign in to the grader first.")
             result = fn(self.client)
         with self._lock:
             if self.client:
@@ -161,14 +176,15 @@ class Core:
         folder = self._path(p["id"])
         if os.path.isdir(folder):
             for name in os.listdir(folder):
-                if name.startswith("statement."):
+                if name.startswith("statement.") and not name.endswith(".tmp"):  # not one still being written
                     return os.path.join(folder, name)
         data, ext = self._call(lambda c: c.fetch_statement(p["id"]))
         os.makedirs(folder, exist_ok=True)
         path = os.path.join(folder, "statement" + ext)
-        with open(path + ".tmp", "wb") as f:
+        tmp = _tmp_name(path)
+        with open(tmp, "wb") as f:
             f.write(data)
-        os.replace(path + ".tmp", path)
+        os.replace(tmp, path)
         return path
 
     def tests(self, p, refresh=False):
