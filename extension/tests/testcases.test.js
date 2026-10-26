@@ -9,7 +9,7 @@ const { parseTestcasePage, GraderClient } = require('../lib/client');
 const { comparedOutputs } = require('../lib/diff');
 const { runTests, runSingle } = require('../lib/runner');
 const { localResultsHtml } = require('../lib/resultsHtml');
-const { havePython } = require('./helpers');
+const { havePython, tempDir } = require('./helpers');
 
 // Same markup as the real page, with made-up data.
 const file = (label, size, text) => `<div class='col-md-6'>
@@ -108,7 +108,7 @@ test('a partly known expected output is checked on its complete lines and the st
 });
 
 test('runner skips a test whose input is only partly known and checks partial outputs by prefix', async (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nattee-tc-'));
+  const dir = tempDir('nattee-tc-');
   const f = path.join(dir, 'sol.py');
   fs.writeFileSync(f, 'for i in range(int(input())): print(i)');
   const cfg = { pythonPath: 'python', cppCompiler: 'g++', cCompiler: 'gcc', timeoutMs: 10000 };
@@ -151,7 +151,7 @@ test('/data/ paths in the input are pointed at the local copies', () => {
 });
 
 test('a program that opens /data/... from its input runs against the data files', async (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nattee-df-'));
+  const dir = tempDir('nattee-df-');
   const f = path.join(dir, 'sol.py');
   fs.writeFileSync(f, 'a, b = input().split()\nprint(open(a).read().strip(), len(open(b).read()))');
   const cfg = { pythonPath: 'python', cppCompiler: 'g++', cCompiler: 'gcc', timeoutMs: 10000 };
@@ -191,7 +191,7 @@ test('a cut-off output that is one long line is still checked (as a prefix), not
 
 const PY_CFG = { pythonPath: 'python', cppCompiler: 'g++', cCompiler: 'gcc', timeoutMs: 10000 };
 async function pyFile(t, src) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nattee-rv-'));
+  const dir = tempDir('nattee-rv-');
   const f = path.join(dir, 'sol.py');
   fs.writeFileSync(f, src);
   if (!(await havePython(t))) return null;

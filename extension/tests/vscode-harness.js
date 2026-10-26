@@ -6,6 +6,8 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
+const { tempDir } = require('./helpers');
+
 const EXT = path.join(__dirname, '..');
 
 function loadExtension(opts = {}) {
@@ -200,7 +202,7 @@ function loadExtension(opts = {}) {
   Module._resolveFilename = realResolve;
 
   // opts.storage: the storage folder of an earlier load, like VS Code starting again
-  const storage = opts.storage || fs.mkdtempSync(path.join(os.tmpdir(), 'nattee-harness-'));
+  const storage = opts.storage || tempDir('nattee-harness-');
   ext.activate({
     extensionPath: EXT, subscriptions: [], globalStorageUri: { fsPath: storage },
     secrets: { get: async (k) => secrets.get(k), store: async (k, v) => { secrets.set(k, v); }, delete: async (k) => { secrets.delete(k); } },

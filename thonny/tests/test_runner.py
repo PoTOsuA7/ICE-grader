@@ -121,6 +121,17 @@ class Runner(unittest.TestCase):
         self.assertEqual(results[0]["verdict"], "FAIL")
         self.assertIn("oops", results[0]["stderr"])
 
+    def test_a_run_folder_still_in_use_is_removed_once_it_is_free_not_left_behind(self):
+        busy = tempfile.mkdtemp(prefix="ice-grader-test-busy-")
+        open(os.path.join(busy, "x.txt"), "w").close()
+        # a program whose working folder it is, still running for a moment (like one killed that hasn't quite ended)
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1)"], cwd=busy)
+        time.sleep(0.3)
+        runner._remove_dir(busy, 1.5)
+        child.wait()
+        time.sleep(2.5)
+        self.assertFalse(os.path.exists(busy), "the folder is still there")
+
 
 if __name__ == "__main__":
     unittest.main()

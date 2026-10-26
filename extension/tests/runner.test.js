@@ -5,17 +5,16 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { runTests, runSingle } = require('../lib/runner');
+const { havePython, tempDir } = require('./helpers');
 
 // Generous limit so a slow CI machine starting Python doesn't turn a correct run into TLE;
 // the timeout tests use `fast` so they don't wait long.
 const cfg = { pythonPath: 'python', cppCompiler: 'g++', cCompiler: 'gcc', timeoutMs: 10000 };
 const fast = { ...cfg, timeoutMs: 1500 };
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nattee-test-'));
+const dir = tempDir('nattee-test-');
 const write = (name, src) => { const f = path.join(dir, name); fs.writeFileSync(f, src); return f; };
 const cases = [{ input: '2 3\n', output: '5\n' }, { input: '10 1\n', output: '11\n' }];
 const verdicts = async (f, cs = cases, c = cfg) => (await runTests(f, cs, c)).map((r) => r.verdict);
-
-const { havePython } = require('./helpers');
 
 test('verdicts: PASS, FAIL, RE, TLE, and trailing whitespace is ignored', async (t) => {
   if (!(await havePython(t))) return;
@@ -82,4 +81,18 @@ test('a huge time limit is not an instant TLE (timers stop at about 24.8 days)',
   if (!(await havePython(t))) return;
   const f = write('quick_huge.py', 'print(int(input()) + 1)');
   assert.deepStrictEqual(await verdicts(f, [{ input: '1\n', output: '2\n' }], { ...cfg, timeoutMs: 3e9 }), ['PASS']);
+});
+
+test('a run folder still in use (on Windows: locked) is removed once it is free, not left behind', async () => {
+  const { removeDir } = require('../lib/runner');
+  const { spawn } = require('child_process');
+  const busy = fs.mkdtempSync(path.join(os.tmpdir(), 'nattee-test-busy-'));
+  fs.writeFileSync(path.join(busy, 'x.txt'), 'x');
+  // a program whose working folder it is, still running for a moment (like one killed that hasn't quite ended)
+  const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 1000)'], { cwd: busy, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
+  await new Promise((r) => setTimeout(r, 300));
+  removeDir(busy, 1500);
+  await new Promise((r) => child.once('exit', r));
+  await new Promise((r) => setTimeout(r, 2500));
+  assert.ok(!fs.existsSync(busy), 'the folder is still there');
 });

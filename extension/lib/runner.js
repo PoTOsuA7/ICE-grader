@@ -9,8 +9,15 @@ const MAX_OUTPUT = 1 << 20; // stop collecting after 1 MiB so an infinite printe
 const EXIT_GRACE_MS = 300; // after the program exits, how long to wait for its output pipes to close
 
 // Remove a temp folder without ever failing the run: on Windows a process that is still running (e.g. one the
-// solution started and left behind) can keep it locked.
-const removeDir = (dir) => { try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* left for the OS */ } };
+// solution started and left behind, or a killed one that hasn't quite ended) can keep it locked. Then it is tried
+// once more a little later, so empty folders don't pile up in the temp folder.
+function removeDir(dir, retryMs = 3000) {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  } catch {
+    if (retryMs) setTimeout(() => removeDir(dir, 0), retryMs).unref();
+  }
+}
 
 const { normalize, comparedOutputs } = require('./diff');
 
@@ -253,4 +260,4 @@ async function runSingle(file, input, cfg, files) {
   }
 }
 
-module.exports = { runTests, runSingle, terminalCommand, dataSandbox, killTree, normalize, mapDataPaths, lastSubmitOn, findPython, prepare, dataName }; // findPython, prepare and dataName: for tests
+module.exports = { runTests, runSingle, terminalCommand, dataSandbox, killTree, normalize, mapDataPaths, lastSubmitOn, findPython, prepare, dataName, removeDir }; // findPython, prepare, dataName and removeDir: for tests

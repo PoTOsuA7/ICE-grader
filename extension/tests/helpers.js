@@ -23,4 +23,18 @@ async function havePython(t) {
   }
 }
 
-module.exports = { havePython };
+// A temp folder, deleted when this test file's process ends (node --test runs each file in its own process), so the
+// tests don't leave folders behind.
+const made = [];
+process.on('exit', () => {
+  for (const dir of made) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* still in use: left for the OS */ }
+  }
+});
+function tempDir(prefix) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  made.push(dir);
+  return dir;
+}
+
+module.exports = { havePython, tempDir };

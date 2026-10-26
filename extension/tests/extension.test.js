@@ -221,8 +221,9 @@ test('a problem without test cases: no test download, no automatic runs, a clear
 // ------------------------------------------------------------ v0.4 features
 const fs = require('fs');
 const os = require('os');
+const { tempDir } = require('./helpers');
 const tempFolder = () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nattee-ws-'));
+  const dir = tempDir('nattee-ws-');
   return { uri: { scheme: 'file', fsPath: dir, path: dir }, dir };
 };
 

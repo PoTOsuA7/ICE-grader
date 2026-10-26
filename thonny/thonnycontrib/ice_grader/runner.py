@@ -23,9 +23,14 @@ def _stop_running():
         kill_tree(proc)
 
 
-def _remove_dir(d):
-    # On Windows a process that is still running (one the solution left behind) can keep it locked.
+def _remove_dir(d, retry=3.0):
+    # On Windows a process that is still running (one the solution left behind, or a killed one that hasn't quite
+    # ended) can keep it locked. Then it is tried once more a little later, so empty folders don't pile up.
     shutil.rmtree(d, ignore_errors=True)
+    if retry and os.path.exists(d):
+        timer = threading.Timer(retry, _remove_dir, (d, 0))
+        timer.daemon = True
+        timer.start()
 
 
 def kill_tree(proc):
