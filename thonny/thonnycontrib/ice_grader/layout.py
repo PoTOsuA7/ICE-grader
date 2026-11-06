@@ -25,16 +25,22 @@ def is_exam(code):
     return bool(_EXAM.search(code))
 
 
-def chapter_of(code):
-    """05_List_15 -> 05_List; exam problems go together by exam number: Exam1, Exam2, ..."""
+def chapter_of(code, name=""):
+    """05_List_15 -> 05_List; exam problems go together by exam number: Exam1, Exam2, ... When the problem's name
+    starts with another chapter number than its code, the name wins, as on the grader's page: code 09_MoreDC_12 named
+    "10_TSD_★_Union Intersection" -> 10_TSD. The same as the VS Code version's chapterOf."""
     m = _EXAM_NUMBER.search(code)
     if m:
         return "Exam%d" % int(m.group(1))
     if is_exam(code):
         return "Exam"
+    in_code = re.match(r"([0-9]+)_", code)
+    in_name = re.match(r"([0-9]+)[_-]([a-zA-Z]+)", name or "")
+    if in_code and in_name and int(in_code.group(1)) != int(in_name.group(1)):
+        return "%s_%s" % (in_name.group(1), in_name.group(2))
     return "_".join(code.split("_")[:2]) or code
 
 
-def solution_path(root, code, ext=".py"):
+def solution_path(root, code, ext=".py", name=""):
     """New solution file: <root>/<chapter>/<code>.py"""
-    return os.path.join(root, safe_name(chapter_of(code)), safe_name(code) + ext)
+    return os.path.join(root, safe_name(chapter_of(code, name)), safe_name(code) + ext)

@@ -125,7 +125,7 @@ function activate(context) {
   // false only when the grader says so; problems cached by older versions all had tests
   const hasTests = (p) => p.hasTestcases !== false;
 
-  const groupOf = (p) => chapterOf(p.code);
+  const groupOf = (p) => chapterOf(p.code, p.name);
 
   class ProblemTree {
     constructor() { this._e = new vscode.EventEmitter(); this.onDidChangeTreeData = this._e.event; }
@@ -565,7 +565,7 @@ function activate(context) {
     // don't count: they are separate attempts.
     const [existing] = await vscode.workspace.findFiles(
       new vscode.RelativePattern(folder, `**/${safeName(p.code)}${ext}`), `**/{node_modules,.git,${MOCK_DIR},${EXPORT_PREFIX}*}/**`, 1);
-    const file = existing ? existing.fsPath : solutionPath(folder.uri.fsPath, p.code, ext, cfg().get('organizeByChapter'));
+    const file = existing ? existing.fsPath : solutionPath(folder.uri.fsPath, p.code, ext, cfg().get('organizeByChapter'), p.name);
     const rel = path.relative(folder.uri.fsPath, file);
     if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) throw new Error(`Refusing to create ${file}: it is outside the workspace folder.`);
     if (!fs.existsSync(file)) {

@@ -315,7 +315,7 @@ class Core:
         solutions = [0]
 
         def one(p):
-            into = os.path.join(folder, safe_name(chapter_of(p["code"])))
+            into = os.path.join(folder, safe_name(chapter_of(p["code"], p.get("name", ""))))
             os.makedirs(into, exist_ok=True)
             statement = self.statement_path(p)
             with open(statement, "rb") as src, open(os.path.join(into, safe_name(p["code"]) + os.path.splitext(statement)[1]), "wb") as dst:

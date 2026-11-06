@@ -262,6 +262,13 @@ class Layout(unittest.TestCase):
         self.assertEqual(chapter_of("2025s1_Exam2_A1-1_Student"), "Exam2")
         self.assertEqual(chapter_of("Exam1-2024_Q1A_student"), "Exam1")
         self.assertEqual(chapter_of("Example_1"), "Example_1")
+        # The grader gave chapter 10's problems codes 09_MoreDC_*, named 10_TSD_*: the name's chapter wins
+        self.assertEqual(chapter_of("09_MoreDC_12", "10_TSD_★_Union Intersection"), "10_TSD")
+        self.assertEqual(chapter_of("09_MoreDC_11", "09_NestedLoop_★_Dedent"), "09_MoreDC")
+        self.assertEqual(chapter_of("02_StrList_01", "02-StrLst_★_CitizenID"), "02_StrList")
+        self.assertEqual(chapter_of("P1_07_Biorhythm", "03_If_★★★-07-Biorhythm"), "P1_07")
+        self.assertTrue(solution_path("root", "09_MoreDC_12", name="10_TSD_★_Union").replace("\\", "/")
+                        .endswith("root/10_TSD/09_MoreDC_12.py"))
         self.assertEqual(safe_name(".."), "problem")
         self.assertEqual(safe_name("a/b c"), "a_b_c")
         self.assertTrue(solution_path("root", "05_List_15").replace("\\", "/").endswith("root/05_List/05_List_15.py"))

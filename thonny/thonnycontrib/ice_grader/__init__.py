@@ -484,7 +484,7 @@ def cmd_open_solution(p):
     root = solutions_dir()
     if not root:
         return
-    path = find_solution(root, p) or solution_path(root, p["code"])
+    path = find_solution(root, p) or solution_path(root, p["code"], name=p.get("name", ""))
     if not os.path.exists(path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8"):
@@ -793,7 +793,7 @@ class GraderView(ttk.Frame):
         self.tree.delete(*self.tree.get_children())
         chapters = {}
         for p in sorted(c.problems, key=lambda p: p["code"].lower()):
-            chapters.setdefault(chapter_of(p["code"]), []).append(p)
+            chapters.setdefault(chapter_of(p["code"], p.get("name", "")), []).append(p)
         for name in sorted(chapters, key=_natural):  # 00_Intro ... 08_Dict, Exam1, Exam2 (before Exam10), P1_07
             problems = chapters[name]
             solved = sum(1 for p in problems if p["status"] == "solved")

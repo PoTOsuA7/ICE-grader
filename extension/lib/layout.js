@@ -19,18 +19,23 @@ const isExam = (s) => /(?<![a-z])exam(?![a-z])/i.test(s);
 const EXAM_NUMBER = /(?<![a-z])exam[\s_-]*(\d+)/i;
 
 // 05_List_15 -> 05_List; exam problems go together by exam number: Exam1, Exam2, ... Also the sidebar's grouping.
-const chapterOf = (code) => {
+// When the problem's name starts with another chapter number than its code, the name wins, as on the grader's page:
+// code 09_MoreDC_12 named "10_TSD_★_Union Intersection" -> 10_TSD.
+const chapterOf = (code, name = '') => {
   const exam = EXAM_NUMBER.exec(code);
   if (exam) return `Exam${Number(exam[1])}`;
   if (isExam(code)) return 'Exam';
+  const inCode = /^([0-9]+)_/.exec(code);
+  const inName = /^([0-9]+)[_-]([A-Za-z]+)/.exec(name || '');
+  if (inCode && inName && Number(inCode[1]) !== Number(inName[1])) return `${inName[1]}_${inName[2]}`;
   return code.split('_').slice(0, 2).join('_') || code;
 };
 
 // New solution file: <root>/<chapter>/<code><ext>, or <root>/<code><ext> when byChapter is off.
-function solutionPath(root, code, ext, byChapter = true) {
+function solutionPath(root, code, ext, byChapter = true, name = '') {
   if (!ext.startsWith('.')) ext = '.' + ext;
   const file = `${safeName(code)}${ext}`;
-  return byChapter ? path.join(root, safeName(chapterOf(code)), file) : path.join(root, file);
+  return byChapter ? path.join(root, safeName(chapterOf(code, name)), file) : path.join(root, file);
 }
 
 module.exports = { safeName, chapterOf, solutionPath, isExam };

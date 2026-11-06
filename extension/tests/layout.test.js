@@ -11,6 +11,17 @@ test('chapterOf takes the first two parts of the code', () => {
   assert.strictEqual(chapterOf('solo'), 'solo');
 });
 
+test('a name with another chapter number than the code wins, as on the grader page', () => {
+  // Real case: the grader gave chapter 10's problems codes 09_MoreDC_*, named 10_TSD_*
+  assert.strictEqual(chapterOf('09_MoreDC_12', '10_TSD_★_Union Intersection'), '10_TSD');
+  assert.strictEqual(chapterOf('09_MoreDC_11', '09_NestedLoop_★_Dedent'), '09_MoreDC');
+  assert.strictEqual(chapterOf('02_StrList_01', '02-StrLst_★_CitizenID'), '02_StrList');
+  assert.strictEqual(chapterOf('P1_07_Biorhythm', '03_If_★★★-07-Biorhythm'), 'P1_07');
+  assert.strictEqual(chapterOf('2025s1_Exam2_A1-1_Student', '10_TSD_x'), 'Exam2');
+  assert.strictEqual(path.relative('r', solutionPath('r', '09_MoreDC_12', 'py', true, '10_TSD_★_Union')),
+    path.join('10_TSD', '09_MoreDC_12.py'));
+});
+
 test('exam practice problems are grouped by exam number', () => {
   assert.strictEqual(chapterOf('2025s1_Exam2_A1-1_Student'), 'Exam2');
   assert.strictEqual(chapterOf('Exam1-2024_Q1A_student'), 'Exam1');
