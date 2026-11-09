@@ -20,7 +20,7 @@ from .client import GraderError, SessionExpired, tile_passed
 from .clipboard import copy_file
 from .core import DEFAULT_ROOT, Core, NotSignedIn, read_source
 from .diff import checked_part, compared_outputs, first_difference, visible
-from .layout import chapter_of, safe_name, solution_path
+from .layout import chapter_of, chapter_spellings, safe_name, solution_path
 from .statement import StatementView, can_show_pdfs
 
 logger = logging.getLogger(__name__)
@@ -484,7 +484,7 @@ def cmd_open_solution(p):
     root = solutions_dir()
     if not root:
         return
-    path = find_solution(root, p) or solution_path(root, p["code"], name=p.get("name", ""))
+    path = find_solution(root, p) or solution_path(root, p["code"], name=p.get("name", ""), spellings=chapter_spellings(core().problems))
     if not os.path.exists(path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8"):
@@ -792,15 +792,20 @@ class GraderView(ttk.Frame):
         selected = self.tree.selection()
         self.tree.delete(*self.tree.get_children())
         chapters = {}
+        spellings = chapter_spellings(c.problems)
         for p in sorted(c.problems, key=lambda p: p["code"].lower()):
-            chapters.setdefault(chapter_of(p["code"], p.get("name", "")), []).append(p)
+            chapters.setdefault(chapter_of(p["code"], p.get("name", ""), spellings), []).append(p)
         for name in sorted(chapters, key=_natural):  # 00_Intro ... 08_Dict, Exam1, Exam2 (before Exam10), P1_07
             problems = chapters[name]
             solved = sum(1 for p in problems if p["status"] == "solved")
             cid = "ch:" + name
             self.tree.insert("", "end", iid=cid, text=name, values=("%d/%d" % (solved, len(problems)),), open=cid in opened)
             for p in problems:
-                self.tree.insert(cid, "end", iid="p:" + p["id"], text=p["code"], values=(self._status(p),))
+                # Named into another chapter than its code (09_MoreDC_12 named 10_TSD_...): show the name, as the
+                # grader's page does, with the code (still the file name) after it
+                moved = chapter_of(p["code"], p.get("name", "")) != chapter_of(p["code"])
+                text = "%s (%s)" % (p["name"], p["code"]) if moved else p["code"]
+                self.tree.insert(cid, "end", iid="p:" + p["id"], text=text, values=(self._status(p),))
         if selected and self.tree.exists(selected[0]):
             self.tree.selection_set(selected[0])
             self.tree.see(selected[0])

@@ -6,7 +6,7 @@ from thonnycontrib.ice_grader.client import (decode_entities, parse_data_files, 
                                              parse_submission_source, parse_submit_form, parse_testcase_page, tile_passed)
 from thonnycontrib.ice_grader import MAX_LINE, GraderResultsView, clip_line, last_submit_text, summary_text
 from thonnycontrib.ice_grader.diff import checked_part, code_hash, compared_outputs, first_difference, normalize, visible
-from thonnycontrib.ice_grader.layout import chapter_of, is_exam, safe_name, solution_path
+from thonnycontrib.ice_grader.layout import chapter_of, chapter_spellings, is_exam, safe_name, solution_path
 from thonnycontrib.ice_grader.runner import last_submit_on
 
 
@@ -267,6 +267,20 @@ class Layout(unittest.TestCase):
         self.assertEqual(chapter_of("09_MoreDC_11", "09_NestedLoop_★_Dedent"), "09_MoreDC")
         self.assertEqual(chapter_of("02_StrList_01", "02-StrLst_★_CitizenID"), "02_StrList")
         self.assertEqual(chapter_of("P1_07_Biorhythm", "03_If_★★★-07-Biorhythm"), "P1_07")
+        # however the chapter number is written (the same cases as the VS Code tests)
+        self.assertEqual(chapter_of("09_MoreDC_1", "11 TSD Union"), "11_TSD")
+        self.assertEqual(chapter_of("09_MoreDC_1", "11-TSD_x"), "11_TSD")
+        self.assertEqual(chapter_of("09_MoreDC_1", "11_★_x"), "11")
+        self.assertEqual(chapter_of("09_MoreDC_1", "3.14 Pi"), "09_MoreDC")
+        self.assertEqual(chapter_of("09_MoreDC_1", "100_Prisoners"), "09_MoreDC")
+        # every spelling of one chapter number lands in one group
+        problems = [{"code": "09_MoreDC_1", "name": "11_TSD_a"}, {"code": "09_MoreDC_2", "name": "11_TSD_b"},
+                    {"code": "09_MoreDC_3", "name": "11_tsd_c"}, {"code": "09_MoreDC_4", "name": "11_★_d"},
+                    {"code": "09_MoreDC_5", "name": "12_new"}, {"code": "12_Graph_1", "name": "12_Graph_x"},
+                    {"code": "Exam_01", "name": "Exam_01"}]
+        spellings = chapter_spellings(problems)
+        self.assertEqual({chapter_of(p["code"], p["name"], spellings) for p in problems[:4]}, {"11_TSD"})
+        self.assertEqual(chapter_of("09_MoreDC_5", "12_new", spellings), "12_Graph")
         self.assertTrue(solution_path("root", "09_MoreDC_12", name="10_TSD_★_Union").replace("\\", "/")
                         .endswith("root/10_TSD/09_MoreDC_12.py"))
         self.assertEqual(safe_name(".."), "problem")

@@ -12,7 +12,7 @@ const { localResultsHtml, singleResultHtml, submissionHtml, explanationHtml, emp
 const { pickProblems, clock, stamp, summarize } = require('./lib/mockExam');
 const { statementHtml } = require('./lib/statement');
 const { explainFailures, MAX_FAILURES } = require('./lib/aiExplain');
-const { safeName, chapterOf, solutionPath } = require('./lib/layout');
+const { safeName, chapterOf, chapterSpellings, movedByName, solutionPath } = require('./lib/layout');
 
 const cfg = () => vscode.workspace.getConfiguration('nattee');
 
@@ -125,7 +125,7 @@ function activate(context) {
   // false only when the grader says so; problems cached by older versions all had tests
   const hasTests = (p) => p.hasTestcases !== false;
 
-  const groupOf = (p) => chapterOf(p.code, p.name);
+  const groupOf = (p) => chapterOf(p.code, p.name, chapterSpellings(problems));
 
   class ProblemTree {
     constructor() { this._e = new vscode.EventEmitter(); this.onDidChangeTreeData = this._e.event; }
@@ -144,9 +144,10 @@ function activate(context) {
         });
       }
       return problems.filter((p) => groupOf(p) === el.groupKey).sort((a, b) => a.code.localeCompare(b.code)).map((p) => {
-        const item = new vscode.TreeItem(p.code, vscode.TreeItemCollapsibleState.None);
+        const moved = movedByName(p.code, p.name);
+        const item = new vscode.TreeItem(moved ? p.name : p.code, vscode.TreeItemCollapsibleState.None);
         // Exam problems' names repeat the code: then show only what adds something.
-        const title = p.name === p.code ? '' : p.name.replace(/^\d+_[A-Za-z]+_/, '').replace(/_/g, ' ');
+        const title = moved ? p.code : p.name === p.code ? '' : p.name.replace(/^\d+_[A-Za-z]+_/, '').replace(/_/g, ' ');
         item.description = [title, !hasTests(p) && 'no tests', p.status === 'inprogress' && p.score]
           .filter((x) => x || x === 0).join(' · ');
         item.tooltip = `${p.code}\n${p.name}\n${p.status || 'untried'}${p.status && p.status !== 'untried' ? ` (best score ${p.score})` : ''}`
@@ -565,7 +566,7 @@ function activate(context) {
     // don't count: they are separate attempts.
     const [existing] = await vscode.workspace.findFiles(
       new vscode.RelativePattern(folder, `**/${safeName(p.code)}${ext}`), `**/{node_modules,.git,${MOCK_DIR},${EXPORT_PREFIX}*}/**`, 1);
-    const file = existing ? existing.fsPath : solutionPath(folder.uri.fsPath, p.code, ext, cfg().get('organizeByChapter'), p.name);
+    const file = existing ? existing.fsPath : solutionPath(folder.uri.fsPath, p.code, ext, cfg().get('organizeByChapter'), p.name, chapterSpellings(problems));
     const rel = path.relative(folder.uri.fsPath, file);
     if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) throw new Error(`Refusing to create ${file}: it is outside the workspace folder.`);
     if (!fs.existsSync(file)) {

@@ -162,6 +162,12 @@ function runOne(cmd, args, input, timeoutMs, cwd) {
     let out = '', err = '', timedOut = false, done = false, exitCode;
     // UTF-8 so printing non-ASCII (★, Thai, ...) doesn't crash Python's default Windows codepage
     const env = { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' };
+    // A program that has open('/data/x.txt') typed in works here too, as on the grader (see pyshim/sitecustomize.py)
+    const dataDir = cwd && path.join(cwd, 'data');
+    if (dataDir && fs.existsSync(dataDir)) {
+      env.ICE_GRADER_DATA = dataDir;
+      env.PYTHONPATH = [path.join(__dirname, 'pyshim'), env.PYTHONPATH].filter(Boolean).join(path.delimiter);
+    }
     const child = spawn(cmd, args, { windowsHide: true, env, cwd, detached: process.platform !== 'win32' });
     const finish = (extra) => {
       if (done) return;

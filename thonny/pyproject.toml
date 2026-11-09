@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "thonny-ice-grader"
-version = "0.2.3"
+version = "0.2.4"
 description = "NatteeGrader (Chula 2190101) in Thonny: your problems, statements, the grader's tests and submit"
 readme = "README.md"
 license = { text = "MIT" }

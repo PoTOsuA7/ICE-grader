@@ -51,6 +51,11 @@ class Runner(unittest.TestCase):
                  {"input": "/data/da", "output": "6\n", "files": files, "partial_input": True}]
         self.assertEqual(self.run_cases(code, cases), ["PASS", "SKIP"])
 
+    def test_data_path_typed_into_the_code_is_found(self):
+        cases = [{"input": "", "output": "hello\n", "files": {"a.txt": "hello"}}]
+        self.assertEqual(self.run_cases("print(open('/data/a.txt').read().strip())\n", cases), ["PASS"])
+        self.assertEqual(self.run_cases("print(open('/data/missing.txt').read())\n", cases), ["RE"])
+
     def test_odd_data_file_names_are_found_and_never_break_the_run(self):
         # the same names as the VS Code version's dataName: "..." would be the sandbox folder itself on Windows
         self.assertEqual([data_name(n, "win32") for n in ("trail.", "a b. ", "...", "x.txt", "dir/", "..\\e.txt")],

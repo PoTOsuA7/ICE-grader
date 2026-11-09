@@ -163,6 +163,18 @@ test('a program that opens /data/... from its input runs against the data files'
   assert.match(localResultsHtml({ code: 'X' }, cases, [{ verdict: 'PASS', ms: 1, stdout: '', stderr: '' }]), /Data files from the grader: a\.txt, b\.txt/);
 });
 
+test('a program with /data/... typed into its code runs against the data files', async (t) => {
+  const dir = tempDir('nattee-df-');
+  const f = path.join(dir, 'sol.py');
+  fs.writeFileSync(f, "print(open('/data/a.txt').read().strip())");
+  const cfg = { pythonPath: 'python', cppCompiler: 'g++', cCompiler: 'gcc', timeoutMs: 10000 };
+  if (!(await havePython(t))) return;
+  const cases = [{ input: '', output: 'hello\n', files: { 'a.txt': 'hello' } }];
+  assert.deepStrictEqual((await runTests(f, cases, cfg)).map((r) => r.verdict), ['PASS']);
+  fs.writeFileSync(f, "print(open('/data/missing.txt').read())");
+  assert.deepStrictEqual((await runTests(f, cases, cfg)).map((r) => r.verdict), ['RE'], 'a file the problem lacks still fails');
+});
+
 test('fetchTestcases attaches the data files to every test', async () => {
   const html = pageHtml(pane(1, ['3 Bytes', 'abc'], ['1 Byte', 'x']), pane(2, ['3 Bytes', 'def'], ['1 Byte', 'y'])) +
     dataSection(['d.txt', '2 Bytes', 'hi']);

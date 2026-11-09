@@ -2,7 +2,13 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
-const { chapterOf, solutionPath, safeName, isExam } = require('../lib/layout');
+const { chapterOf, chapterSpellings, movedByName, solutionPath, safeName, isExam } = require('../lib/layout');
+
+test('movedByName marks only problems whose name names another chapter', () => {
+  assert.strictEqual(movedByName('09_MoreDC_12', '10_TSD_★_Union Intersection'), true);
+  assert.strictEqual(movedByName('09_MoreDC_11', '09_NestedLoop_★_Dedent'), false);
+  assert.strictEqual(movedByName('05_List_15', '05_List_★★_UniqueCount'), false);
+});
 
 test('chapterOf takes the first two parts of the code', () => {
   assert.strictEqual(chapterOf('05_List_15'), '05_List');
@@ -20,6 +26,29 @@ test('a name with another chapter number than the code wins, as on the grader pa
   assert.strictEqual(chapterOf('2025s1_Exam2_A1-1_Student', '10_TSD_x'), 'Exam2');
   assert.strictEqual(path.relative('r', solutionPath('r', '09_MoreDC_12', 'py', true, '10_TSD_★_Union')),
     path.join('10_TSD', '09_MoreDC_12.py'));
+});
+
+test('a chapter number in the name is understood however it is written', () => {
+  assert.strictEqual(chapterOf('09_MoreDC_1', '11 TSD Union'), '11_TSD');
+  assert.strictEqual(chapterOf('09_MoreDC_1', '11-TSD_x'), '11_TSD');
+  assert.strictEqual(chapterOf('09_MoreDC_1', '11_★_x'), '11');
+  assert.strictEqual(chapterOf('09_MoreDC_1', '3.14 Pi'), '09_MoreDC', 'a decimal is no chapter number');
+  assert.strictEqual(chapterOf('09_MoreDC_1', '100_Prisoners'), '09_MoreDC', 'chapter numbers are at most two digits');
+  assert.strictEqual(movedByName('09_MoreDC_1', '11_★_x'), true);
+});
+
+test('every spelling of one chapter number lands in one group', () => {
+  const problems = [
+    { code: '09_MoreDC_1', name: '11_TSD_a' }, { code: '09_MoreDC_2', name: '11_TSD_b' },
+    { code: '09_MoreDC_3', name: '11_tsd_c' }, { code: '09_MoreDC_4', name: '11_★_d' },
+    { code: '09_MoreDC_5', name: '12_new' }, { code: '12_Graph_1', name: '12_Graph_x' },
+    { code: 'Exam_01', name: 'Exam_01' },
+  ];
+  const s = chapterSpellings(problems);
+  assert.deepStrictEqual(problems.slice(0, 4).map((p) => chapterOf(p.code, p.name, s)), Array(4).fill('11_TSD'));
+  assert.strictEqual(chapterOf('09_MoreDC_5', '12_new', s), '12_Graph', "a chapter the codes use wins");
+  assert.strictEqual(path.relative('r', solutionPath('r', '09_MoreDC_3', 'py', true, '11_tsd_c', s)),
+    path.join('11_TSD', '09_MoreDC_3.py'));
 });
 
 test('exam practice problems are grouped by exam number', () => {

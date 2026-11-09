@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from . import runner
 from .client import GraderClient, GraderError, SessionExpired
 from .diff import code_hash
-from .layout import safe_name, chapter_of
+from .layout import safe_name, chapter_of, chapter_spellings
 from .passwords import KeyringSecrets
 
 DEFAULT_ROOT = "https://2190101.nattee.net/"
@@ -313,9 +313,10 @@ class Core:
         """Every statement and the latest submitted code of each problem, by chapter, into folder."""
         self.refresh_problems()
         solutions = [0]
+        spellings = chapter_spellings(self.problems)
 
         def one(p):
-            into = os.path.join(folder, safe_name(chapter_of(p["code"], p.get("name", ""))))
+            into = os.path.join(folder, safe_name(chapter_of(p["code"], p.get("name", ""), spellings)))
             os.makedirs(into, exist_ok=True)
             statement = self.statement_path(p)
             with open(statement, "rb") as src, open(os.path.join(into, safe_name(p["code"]) + os.path.splitext(statement)[1]), "wb") as dst:

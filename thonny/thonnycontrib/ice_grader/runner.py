@@ -104,6 +104,12 @@ def _reader(stream, sink):
 def run_one(python, file, text, time_limit, cwd=None):
     """-> {stdout, stderr, code, timed_out, ms}"""
     env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
+    # A program that has open("/data/x.txt") typed in works here too, as on the grader (see pyshim/sitecustomize.py)
+    data_dir = os.path.join(cwd, "data") if cwd else None
+    if data_dir and os.path.isdir(data_dir):
+        shim = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pyshim")
+        env["ICE_GRADER_DATA"] = data_dir
+        env["PYTHONPATH"] = os.pathsep.join(filter(None, [shim, env.get("PYTHONPATH")]))
     start = time.time()
     proc = subprocess.Popen([python, file], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             cwd=cwd, env=env, creationflags=_NO_WINDOW, start_new_session=sys.platform != "win32")
